@@ -3,14 +3,11 @@ name: Job Pipeline
 # Runs the discovery → score → resume → suggest → prep pipeline against Neon.
 # Workday apply / LinkedIn scrape stay off (no Playwright sessions in Actions).
 on:
-  # Cron is DISABLED while we tune LLM cost per run (see AGENTS.md / cost note
-  # in this file's history). Trigger manually via Actions -> Job Pipeline ->
-  # Run workflow until this is re-enabled on purpose.
-  # schedule:
-  #   # 08:00 and 13:00 America/Los_Angeles (UTC-7 standard; UTC-8 during PDT)
-  #   - cron: "0 15,20 * * *"
-  #   # 18:00 America/Los_Angeles
-  #   - cron: "0 1 * * *"
+  schedule:
+    # 08:00 and 13:00 America/Los_Angeles (UTC-7 standard; UTC-8 during PDT)
+    - cron: "0 15,20 * * *"
+    # 18:00 America/Los_Angeles
+    - cron: "0 1 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -41,6 +38,8 @@ jobs:
           ENABLE_LINKEDIN_SCRAPE: "false"
           ENABLE_REVIEWS: "true"
           ENABLE_PREP_PACK: "true"
-          ENABLE_SUGGESTIONS: "true"
+          # Skill-suggestion cards are not being reviewed right now (resume
+          # edits are manual) — leaving this on is pure LLM-call overhead.
+          ENABLE_SUGGESTIONS: "false"
           TIMEZONE: America/Los_Angeles
           LLM_PROVIDER: gemini
