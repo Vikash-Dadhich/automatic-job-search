@@ -163,6 +163,11 @@ class Settings(BaseSettings):
         default=True,
         description="Generate and send LinkedIn/Indeed application prep packs via Telegram",
     )
+    prep_pack_limit: int = Field(
+        default=20,
+        ge=1,
+        description="Max jobs per prep-pack run. Caps LLM calls when a backlog exists.",
+    )
 
     # Storage paths (relative to project root unless absolute)
     resumes_dir: Path = Path("storage/resumes")

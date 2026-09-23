@@ -235,7 +235,8 @@ def normalize_database_url(url: str) -> str:
 
     # asyncpg wants ssl=require (not libpq sslmode). Drop Prisma/libpq params it rejects.
     _DROP_QUERY = {"channel_binding", "connection_limit", "connect_timeout", "pgbouncer"}
-    if any(k in raw for k in ("channel_binding=", "sslmode=", "connection_limit=", "connect_timeout=")):
+    _needs_rewrite = ("channel_binding=", "sslmode=", "connection_limit=", "connect_timeout=")
+    if any(k in raw for k in _needs_rewrite):
         from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
         parsed = urlparse(raw)
@@ -278,14 +279,18 @@ def get_engine():
         settings = get_settings()
         url = normalize_database_url(settings.database_url)
         connect_args: dict[str, object] = {}
+        engine_kwargs: dict[str, object] = {"echo": False}
         # Neon / PgBouncer transaction poolers break asyncpg prepared-statement cache.
         if _is_postgres_url(url) and "-pooler." in url:
             connect_args["statement_cache_size"] = 0
-        _engine = create_async_engine(
-            url,
-            echo=False,
-            connect_args=connect_args,
-        )
+        if _is_postgres_url(url):
+            # Detect and discard stale connections before use. Long pipeline runs
+            # (15+ min) exceed Neon's pooler idle-connection timeout; without
+            # pre_ping the next stage gets an "InterfaceError: connection is closed".
+            engine_kwargs["pool_pre_ping"] = True
+            # Belt-and-suspenders: recycle connections after 4 min regardless.
+            engine_kwargs["pool_recycle"] = 240
+        _engine = create_async_engine(url, connect_args=connect_args, **engine_kwargs)
         _session_factory = async_sessionmaker(
             _engine,
             class_=AsyncSession,

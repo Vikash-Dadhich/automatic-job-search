@@ -9,6 +9,7 @@ import structlog
 
 from bot.telegram import TelegramClient
 from config.profile import Profile, load_profile
+from config.settings import get_settings
 from core.db import (
     get_job_by_id,
     get_unsent_prep_pack_jobs,
@@ -39,14 +40,21 @@ async def send_prep_pack(
     llm_client: LLMClient | None = None,
     limit: int | None = None,
 ) -> PrepSummary:
-    """Build and send a combined prep pack for unsent staged LinkedIn/Indeed jobs."""
+    """Build and send a combined prep pack for unsent staged LinkedIn/Indeed jobs.
+
+    ``limit`` defaults to ``settings.prep_pack_limit`` (20) so a large backlog
+    never fans out into hundreds of LLM answer-drafting calls in one run.
+    """
     await init_db()
     client = client or TelegramClient()
     profile = profile or load_profile()
     summary = PrepSummary()
 
+    settings = get_settings()
+    effective_limit = limit if limit is not None else settings.prep_pack_limit
+
     async with session_scope() as session:
-        jobs = await get_unsent_prep_pack_jobs(session, limit=limit)
+        jobs = await get_unsent_prep_pack_jobs(session, limit=effective_limit)
 
     if not jobs:
         log.info("send_prep_pack_empty")
