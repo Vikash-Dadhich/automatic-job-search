@@ -48,3 +48,9 @@ jobs:
           ENABLE_SUGGESTIONS: "false"
           TIMEZONE: America/Los_Angeles
           LLM_PROVIDER: gemini
+          # Use flash for both scorer and writer — ~15x cheaper than pro-preview,
+          # plenty of quality for outreach notes and essay answers.
+          GEMINI_SCORER_MODEL: gemini-3.6-flash
+          GEMINI_WRITER_MODEL: gemini-3.6-flash
+          GEMINI_SCORER_THINKING_LEVEL: low
+          GEMINI_WRITER_THINKING_LEVEL: low
