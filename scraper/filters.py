@@ -91,6 +91,7 @@ def _yoe_reason(haystack: str, profile: Profile) -> str | None:
 
 def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
     """Return whether a posting should proceed to scoring."""
+    settings = get_settings()
     haystack = _haystack(posting)
     exclusions = profile.exclusions
 
@@ -115,6 +116,13 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
         for pattern in _STAFFING_PATTERNS:
             if re.search(pattern, haystack, re.IGNORECASE):
                 return FilterResult(False, f"staffing agency matched: {pattern}")
+
+    # Internship-only gate: title must contain "intern" or "internship".
+    # Enabled when INTERNSHIP_ONLY=true (summer internship search mode).
+    if settings.internship_only:
+        title_lower = (posting.title or "").lower()
+        if "intern" not in title_lower:
+            return FilterResult(False, "internship_only: title lacks 'intern'")
 
     # Seniority mismatch (title-only — avoid matching inside descriptions)
     seniority = _seniority_reason(posting.title or "")

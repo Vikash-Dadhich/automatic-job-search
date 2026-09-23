@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from config.profile import Profile
 from core.db import Source
 from scraper.filters import evaluate
@@ -133,4 +135,36 @@ def test_pass_mid_level_pm(profile: Profile) -> None:
         ),
         profile,
     )
+    assert result.passed is True
+
+
+def test_internship_only_rejects_fulltime(
+    profile: Profile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INTERNSHIP_ONLY", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    result = evaluate(_posting(title="Product Manager", external_id="intern-1"), profile)
+    assert result.passed is False
+    assert "intern" in (result.reason or "").lower()
+    get_settings.cache_clear()
+
+
+def test_internship_only_passes_intern_title(
+    profile: Profile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INTERNSHIP_ONLY", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    result = evaluate(
+        _posting(title="Product Manager Intern", external_id="intern-2"), profile
+    )
+    assert result.passed is True
+    get_settings.cache_clear()
+
+
+def test_internship_only_off_by_default(profile: Profile) -> None:
+    result = evaluate(_posting(title="Product Manager", external_id="intern-3"), profile)
     assert result.passed is True

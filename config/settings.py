@@ -116,6 +116,13 @@ class Settings(BaseSettings):
         ge=1000,
         description="Chars of job description kept for storage and scoring prompts",
     )
+    internship_only: bool = Field(
+        default=False,
+        description=(
+            "When true, reject any posting whose title does not contain 'intern' or 'internship'. "
+            "Set to true while targeting summer internships."
+        ),
+    )
     enable_seniority_filter: bool = Field(
         default=True,
         description="Drop over-senior titles (director/vp/principal/...) before scoring",
