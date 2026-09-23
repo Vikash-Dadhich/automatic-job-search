@@ -11,6 +11,7 @@ from bot.telegram import TelegramClient
 from config.profile import Profile, load_profile
 from config.settings import get_settings
 from core.db import (
+    Job,
     get_job_by_id,
     get_unsent_prep_pack_jobs,
     init_db,
@@ -33,6 +34,67 @@ class PrepSummary:
     pdf_path: str | None = None
 
 
+def _brief_message(jobs: list[Job]) -> str:
+    """Compact job list — no LLM, no PDF, just the 5 fields the user wants."""
+    lines: list[str] = [f"🔍 {len(jobs)} new internship lead(s)\n"]
+    for i, job in enumerate(jobs, 1):
+        tier_num = job.tier.value if job.tier else "?"
+        lines.append(
+            f"{i}. {job.title} @ {job.company}\n"
+            f"   📍 {job.location or 'N/A'}\n"
+            f"   Score / Tier: {job.score} / {tier_num}\n"
+            f"   Source: {job.source.value if job.source else '?'}\n"
+            f"   🔗 {job.url}\n"
+        )
+    return "\n".join(lines).strip()
+
+
+async def _send_brief(
+    jobs: list[Job],
+    client: TelegramClient,
+) -> PrepSummary:
+    """Send a compact text message — no LLM calls, no file uploads."""
+    summary = PrepSummary()
+    # Telegram message limit is 4096 chars; chunk if needed.
+    CHUNK = 15
+    chunks = [jobs[i : i + CHUNK] for i in range(0, len(jobs), CHUNK)]
+    now = datetime.now(UTC)
+    for chunk in chunks:
+        text = _brief_message(chunk)
+        try:
+            await client.send_message(text)
+            summary.sent += 1
+        except Exception as exc:
+            log.warning("prep_pack_brief_send_failed", error=str(exc))
+            summary.errors += 1
+            summary.error_details.append(f"telegram: {exc}")
+            return summary
+
+        for job in chunk:
+            if job.id is None:
+                continue
+            try:
+                async with session_scope() as session:
+                    target = await get_job_by_id(session, job.id)
+                    if target is None or target.prep_pack_sent_at is not None:
+                        continue
+                    target.prep_pack_sent_at = now
+                    target.updated_at = now
+                    session.add(target)
+            except Exception as exc:
+                log.warning("prep_pack_mark_failed", job_id=job.id, error=str(exc))
+
+    summary.jobs = len(jobs)
+    log.info(
+        "send_prep_pack_complete",
+        mode="brief",
+        jobs=summary.jobs,
+        sent=summary.sent,
+        errors=summary.errors,
+    )
+    return summary
+
+
 async def send_prep_pack(
     client: TelegramClient | None = None,
     *,
@@ -40,10 +102,15 @@ async def send_prep_pack(
     llm_client: LLMClient | None = None,
     limit: int | None = None,
 ) -> PrepSummary:
-    """Build and send a combined prep pack for unsent staged LinkedIn/Indeed jobs.
+    """Build and send a prep pack for unsent staged LinkedIn/Indeed jobs.
 
-    ``limit`` defaults to ``settings.prep_pack_limit`` (20) so a large backlog
-    never fans out into hundreds of LLM answer-drafting calls in one run.
+    Brief mode (PREP_PACK_BRIEF=true): sends a compact Telegram text message with
+    just title, location, score, source and URL — no LLM calls, no PDF.
+
+    Full mode (default): generates LLM-drafted answers + Typst PDF + Markdown.
+    Switch back by setting PREP_PACK_BRIEF=false.
+
+    ``limit`` defaults to ``settings.prep_pack_limit`` (20).
     """
     await init_db()
     client = client or TelegramClient()
@@ -61,6 +128,11 @@ async def send_prep_pack(
         summary.skipped = 1
         return summary
 
+    # --- Brief mode: no LLM, no PDF ----------------------------------------
+    if settings.prep_pack_brief:
+        return await _send_brief(jobs, client)
+
+    # --- Full mode: LLM essay drafting + Typst PDF --------------------------
     try:
         pack = await generate_prep_pack(
             jobs,
@@ -123,6 +195,7 @@ async def send_prep_pack(
 
     log.info(
         "send_prep_pack_complete",
+        mode="full",
         jobs=summary.jobs,
         sent=summary.sent,
         errors=summary.errors,

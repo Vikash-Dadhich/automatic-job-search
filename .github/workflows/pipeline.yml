@@ -43,6 +43,9 @@ jobs:
           # Cap LLM calls: at most 20 jobs per prep-pack run.
           # Raise this once the Telegram backlog clears and cost is confirmed.
           PREP_PACK_LIMIT: "20"
+          # Brief mode: compact text message only (no LLM, no PDF).
+          # Set to false to re-enable full essay-drafted prep packs.
+          PREP_PACK_BRIEF: "true"
           # Skill-suggestion cards are not being reviewed right now (resume
           # edits are manual) — leaving this on is pure LLM-call overhead.
           ENABLE_SUGGESTIONS: "false"

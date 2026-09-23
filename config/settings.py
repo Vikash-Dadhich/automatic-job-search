@@ -175,6 +175,14 @@ class Settings(BaseSettings):
         ge=1,
         description="Max jobs per prep-pack run. Caps LLM calls when a backlog exists.",
     )
+    prep_pack_brief: bool = Field(
+        default=False,
+        description=(
+            "When true, send a compact Telegram text message (title, location, score, "
+            "source, URL) instead of a full PDF+Markdown prep pack. "
+            "No LLM calls are made in brief mode. Set full mode when you need drafted answers."
+        ),
+    )
 
     # Storage paths (relative to project root unless absolute)
     resumes_dir: Path = Path("storage/resumes")
