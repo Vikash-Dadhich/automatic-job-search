@@ -1,0 +1,43 @@
+name: Job Pipeline
+
+# Runs the discovery → score → resume → suggest → prep pipeline against Neon.
+# Workday apply / LinkedIn scrape stay off (no Playwright sessions in Actions).
+on:
+  schedule:
+    # 08:00 and 13:00 America/Los_Angeles (UTC-7 standard; UTC-8 during PDT)
+    - cron: "0 15,20 * * *"
+    # 18:00 America/Los_Angeles
+    - cron: "0 1 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run pipeline once
+        run: uv run python main.py run-once
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Discovery + score + suggest + prep only (no browser)
+          ENABLE_APPLY: "false"
+          ENABLE_BENCHMARK: "false"
+          ENABLE_LINKEDIN_SCRAPE: "false"
+          ENABLE_REVIEWS: "true"
+          ENABLE_PREP_PACK: "true"
+          ENABLE_SUGGESTIONS: "true"
+          TIMEZONE: America/Los_Angeles
+          LLM_PROVIDER: gemini

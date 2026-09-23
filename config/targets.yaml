@@ -1,0 +1,28 @@
+# Discovery targets for LinkedIn/Indeed (JobSpy) and Workday CXS tenants.
+# Search terms aligned to Product Management + Consulting.
+
+search:
+  terms:
+    - "Product Manager"
+    - "Associate Product Manager"
+    - "Product Management"
+    - "Management Consultant"
+  sites:
+    - linkedin
+    - indeed
+  location: "United States"
+  distance: 50
+  results_wanted: 25
+  country_indeed: "USA"
+  hours_old: 24
+  linkedin_fetch_description: true
+
+# Each entry needs a REAL careers or job deep-link URL.
+# tenant / shard / site cannot be guessed — they are parsed from the URL.
+# Example: https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite
+# TODO (manual): replace with real Workday careers URLs when ready to auto-apply.
+workday_tenants:
+  - name: "PLACEHOLDER_COMPANY"
+    url: "https://placeholder.wd1.myworkdayjobs.com/External"
+    # Optional search text applied to this tenant (defaults to search.terms)
+    search_terms: []

@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment & secrets
+.env
+.env.local
+*.pem
+config/credentials.yaml
+config/base_resume.pdf
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime storage artifacts (keep directory structure via .gitkeep)
+storage/sessions/*
+!storage/sessions/.gitkeep
+storage/resumes/*
+!storage/resumes/.gitkeep
+storage/screenshots/*
+!storage/screenshots/.gitkeep
+storage/prep_packs/*
+!storage/prep_packs/.gitkeep
+
+# IDE / tooling
+.idea/
+.vscode/
+*.swp
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.pytest_cache/
+.DS_Store

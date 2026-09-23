@@ -1,0 +1,59 @@
+{
+  "job_id": 28,
+  "overall_score": 50,
+  "percentile": 50.0,
+  "dimensions": [
+    {
+      "name": "years_experience",
+      "mine": 5.2,
+      "peer_median": 0.0,
+      "percentile": 50.0,
+      "note": "Total years across roles"
+    },
+    {
+      "name": "jd_skill_coverage",
+      "mine": 8.3,
+      "peer_median": 0.0,
+      "percentile": 50.0,
+      "note": "% of JD top skills present on profile"
+    },
+    {
+      "name": "education",
+      "mine": 3.5,
+      "peer_median": 0.0,
+      "percentile": 50.0,
+      "note": "Degree level rank"
+    },
+    {
+      "name": "seniority",
+      "mine": 5.0,
+      "peer_median": 0.0,
+      "percentile": 50.0,
+      "note": "Seniority band"
+    }
+  ],
+  "strengths": [
+    "Keep applying — peer set may be senior-skewed"
+  ],
+  "gaps": [
+    "Missing JD skill: Product Roadmapping",
+    "Missing JD skill: User Stories",
+    "Missing JD skill: Backlog Prioritization",
+    "Missing JD skill: Market Research",
+    "Missing JD skill: A/B Testing",
+    "Missing JD skill: ROI Analysis",
+    "Missing JD skill: Agile Development",
+    "Missing JD skill: Scrum",
+    "Missing JD skill: Prototyping",
+    "Missing JD skill: Competitive Analysis",
+    "Missing JD skill: Go-To-Market Strategy"
+  ],
+  "recommendations": [
+    "Add or demonstrate Product Roadmapping on resume/profile",
+    "Add or demonstrate User Stories on resume/profile",
+    "Add or demonstrate Backlog Prioritization on resume/profile",
+    "Add or demonstrate Market Research on resume/profile",
+    "Add or demonstrate A/B Testing on resume/profile"
+  ],
+  "peer_count": 0
+}

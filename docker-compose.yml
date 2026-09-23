@@ -1,0 +1,20 @@
+services:
+  job-agent:
+    build: .
+    container_name: job-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: ${TIMEZONE:-America/Los_Angeles}
+      BROWSER_HEADLESS: "true"
+    volumes:
+      # Persist DB, sessions, resumes, screenshots across restarts
+      - ./storage:/app/storage
+      # Mount filled config (profile/targets/credentials) from the host
+      - ./config/profile.yaml:/app/config/profile.yaml:ro
+      - ./config/targets.yaml:/app/config/targets.yaml:ro
+      - ./config/credentials.yaml:/app/config/credentials.yaml:ro
+    # Optional: expose FastAPI webhook when using `main.py webhook`
+    # ports:
+    #   - "8000:8000"
