@@ -4,9 +4,9 @@ name: Job Pipeline
 # Workday apply / LinkedIn scrape stay off (no Playwright sessions in Actions).
 on:
   schedule:
-    # 08:00 America/Los_Angeles (UTC-7 in summer / UTC-8 in winter)
-    - cron: "0 15 * * *"
-    # 19:00 America/Los_Angeles
+    # 11:00 America/Los_Angeles during PDT (UTC-7). In winter (PST) this is 10:00 AM.
+    - cron: "0 18 * * *"
+    # 19:00 America/Los_Angeles during PDT (UTC-7). In winter (PST) this is 6:00 PM.
     - cron: "0 2 * * *"
   workflow_dispatch: {}
 
