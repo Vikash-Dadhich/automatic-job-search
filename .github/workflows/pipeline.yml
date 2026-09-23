@@ -3,11 +3,13 @@ name: Job Pipeline
 # Runs the discovery → score → resume → suggest → prep pipeline against Neon.
 # Workday apply / LinkedIn scrape stay off (no Playwright sessions in Actions).
 on:
-  schedule:
-    # 08:00 and 13:00 America/Los_Angeles (UTC-7 standard; UTC-8 during PDT)
-    - cron: "0 15,20 * * *"
-    # 18:00 America/Los_Angeles
-    - cron: "0 1 * * *"
+  # Cron is DISABLED while we tune LLM cost per run. Trigger manually via
+  # Actions -> Job Pipeline -> Run workflow until re-enabled on purpose.
+  # schedule:
+  #   # 08:00 and 13:00 America/Los_Angeles (UTC-7 standard; UTC-8 during PDT)
+  #   - cron: "0 15,20 * * *"
+  #   # 18:00 America/Los_Angeles
+  #   - cron: "0 1 * * *"
   workflow_dispatch: {}
 
 jobs:
