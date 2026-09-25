@@ -19,6 +19,7 @@ from core.db import (
 )
 from prep.builder import generate_prep_pack
 from scorer.engine import LLMClient
+from scraper.filters import sponsorship_signal
 
 log = structlog.get_logger(__name__)
 
@@ -34,16 +35,26 @@ class PrepSummary:
     pdf_path: str | None = None
 
 
+_VISA_EMOJI = {
+    "friendly": "🟢 Sponsors visa",
+    "hostile": "🔴 No sponsorship",  # should not reach brief (filtered at ingest)
+    "unknown": "⚠️ Sponsorship not mentioned — verify before applying",
+}
+
+
 def _brief_message(jobs: list[Job]) -> str:
-    """Compact job list — no LLM, no PDF, just the 5 fields the user wants."""
+    """Compact job list — no LLM, no PDF, just the 6 fields the user wants."""
     lines: list[str] = [f"🔍 {len(jobs)} new internship lead(s)\n"]
     for i, job in enumerate(jobs, 1):
         tier_num = job.tier.value if job.tier else "?"
+        visa_status = sponsorship_signal(job.description_clean or "")
+        visa_line = _VISA_EMOJI.get(visa_status, "⚠️ Sponsorship unknown")
         lines.append(
             f"{i}. {job.title} @ {job.company}\n"
             f"   📍 {job.location or 'N/A'}\n"
             f"   Score / Tier: {job.score} / {tier_num}\n"
             f"   Source: {job.source.value if job.source else '?'}\n"
+            f"   🛂 {visa_line}\n"
             f"   🔗 {job.url}\n"
         )
     return "\n".join(lines).strip()

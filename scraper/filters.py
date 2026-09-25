@@ -43,12 +43,32 @@ _YOE_REQUIRED_RE = re.compile(
 )
 _SPONSORSHIP_HOSTILE_PATTERNS = (
     r"no\s+(?:visa\s+)?sponsorship",
-    r"does\s+not\s+(?:offer|provide)\s+(?:visa\s+)?sponsorship",
+    # do/does not + cannot offer/provide sponsorship
+    r"do(?:es)?\s+not\s+(?:offer|provide)\s+(?:visa\s+)?sponsorship",
+    r"cannot\s+(?:offer|provide|sponsor)\b",
+    r"can\s+not\s+(?:offer|provide|sponsor)\b",
     r"must\s+be\s+(?:a\s+)?(?:us|u\.s\.)\s+citizen",
     r"(?:us|u\.s\.)\s+citizens?\s+only",
     r"citizenship\s+required",
+    # "requires US citizenship" (word order reversed from "citizenship required")
+    r"requires?\s+(?:us|u\.s\.)\s+citizenship",
     r"unable\s+to\s+sponsor",
     r"will\s+not\s+sponsor",
+)
+# Patterns that signal the company actively sponsors visas.
+# Hostile patterns are checked first, so negated variants ("we do NOT sponsor")
+# are never misclassified as friendly.
+_SPONSORSHIP_FRIENDLY_PATTERNS = (
+    r"visa\s+sponsorship\s+(?:is\s+)?(?:available|provided|offered)",
+    r"we\s+(?:do\s+)?(?:offer|provide)\s+(?:visa\s+)?sponsorship",
+    r"sponsorship\s+(?:is\s+)?(?:available|provided|offered)",
+    r"open\s+to\s+(?:visa\s+)?sponsorship",
+    r"we\s+(?:will\s+)?sponsor\b",
+    # OPT/CPT/F-1 friendly signals common in internship JDs
+    r"\bopt(?:\s*/\s*cpt)?\s+(?:friendly|accepted|welcome|eligible|ok|okay|students?\s+welcome)\b",
+    r"\bcpt(?:\s*/\s*opt)?\s+(?:friendly|accepted|welcome|eligible|ok|okay)\b",
+    r"\bf-?1\s+(?:visa\s+)?(?:students?\s+)?(?:friendly|accepted|welcome|eligible)\b",
+    r"\bopt\s+and\s+cpt\b",
 )
 
 
@@ -56,6 +76,27 @@ _SPONSORSHIP_HOSTILE_PATTERNS = (
 class FilterResult:
     passed: bool
     reason: str | None = None
+
+
+def sponsorship_signal(text: str) -> str:
+    """Classify a JD's stance on visa sponsorship without a profile dependency.
+
+    Returns:
+        ``"hostile"``  – explicit refusal (no sponsorship / citizens only).
+        ``"friendly"`` – explicit offer (will sponsor / OPT welcome / …).
+        ``"unknown"``  – no mention either way; candidate should verify.
+
+    Hostile is checked before friendly so a phrase like
+    "We do NOT sponsor visas" is never misclassified.
+    """
+    haystack = text.lower()
+    for pattern in _SPONSORSHIP_HOSTILE_PATTERNS:
+        if re.search(pattern, haystack, re.IGNORECASE):
+            return "hostile"
+    for pattern in _SPONSORSHIP_FRIENDLY_PATTERNS:
+        if re.search(pattern, haystack, re.IGNORECASE):
+            return "friendly"
+    return "unknown"
 
 
 def _seniority_reason(title: str) -> str | None:

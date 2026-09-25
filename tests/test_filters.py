@@ -6,7 +6,7 @@ import pytest
 
 from config.profile import Profile
 from core.db import Source
-from scraper.filters import evaluate
+from scraper.filters import evaluate, sponsorship_signal
 from scraper.models import RawPosting
 
 
@@ -168,3 +168,40 @@ def test_internship_only_passes_intern_title(
 def test_internship_only_off_by_default(profile: Profile) -> None:
     result = evaluate(_posting(title="Product Manager", external_id="intern-3"), profile)
     assert result.passed is True
+
+
+# ── Sponsorship signal ──────────────────────────────────────────────────────
+
+def test_sponsorship_signal_hostile_no_sponsorship() -> None:
+    assert sponsorship_signal("We do not offer visa sponsorship.") == "hostile"
+    assert sponsorship_signal("This role requires US citizenship.") == "hostile"
+    assert sponsorship_signal("Will not sponsor work visas.") == "hostile"
+
+
+def test_sponsorship_signal_hostile_citizenship_required() -> None:
+    assert sponsorship_signal("US citizens only.") == "hostile"
+    assert sponsorship_signal("Citizenship required for this position.") == "hostile"
+
+
+def test_sponsorship_signal_friendly_explicit() -> None:
+    assert sponsorship_signal("Visa sponsorship is available for this role.") == "friendly"
+    assert sponsorship_signal("We offer visa sponsorship for qualified candidates.") == "friendly"
+    assert sponsorship_signal("We will sponsor H-1B and other work visas.") == "friendly"
+
+
+def test_sponsorship_signal_friendly_opt_cpt() -> None:
+    assert sponsorship_signal("OPT and CPT students are welcome to apply.") == "friendly"
+    assert sponsorship_signal("F-1 visa students eligible.") == "friendly"
+    assert sponsorship_signal("OPT friendly internship program.") == "friendly"
+
+
+def test_sponsorship_signal_unknown_no_mention() -> None:
+    jd = "We are looking for a motivated intern to join our product team."
+    assert sponsorship_signal(jd) == "unknown"
+
+
+def test_sponsorship_signal_hostile_beats_friendly() -> None:
+    # Negated sentence must never be classified as friendly
+    assert sponsorship_signal(
+        "We do not offer visa sponsorship. OPT students may apply but we cannot sponsor."
+    ) == "hostile"
