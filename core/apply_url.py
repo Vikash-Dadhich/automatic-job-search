@@ -14,6 +14,8 @@ class ApplyKind(StrEnum):
     workday = "workday"
     linkedin = "linkedin"  # Easy Apply / listing page — manual
     indeed = "indeed"
+    google = "google"  # Google Jobs aggregator listing — manual
+    zip_recruiter = "zip_recruiter"  # ZipRecruiter listing — manual
     company = "company"  # External careers site (Greenhouse, Amazon, etc.)
     unknown = "unknown"
 
@@ -54,6 +56,10 @@ def classify_apply_url(url: str) -> ApplyKind:
         return ApplyKind.linkedin
     if "indeed.com" in host:
         return ApplyKind.indeed
+    if "ziprecruiter.com" in host:
+        return ApplyKind.zip_recruiter
+    if "google.com" in host:
+        return ApplyKind.google
     return ApplyKind.company
 
 

@@ -21,6 +21,8 @@ log = structlog.get_logger(__name__)
 _SITE_MAP: dict[str, Source] = {
     "linkedin": Source.linkedin,
     "indeed": Source.indeed,
+    "google": Source.google,
+    "zip_recruiter": Source.zip_recruiter,
 }
 
 
@@ -134,10 +136,19 @@ def _dataframe_to_postings(
     return out
 
 
+def _google_search_term(search: SearchConfig, term: str) -> str:
+    """Google Jobs needs a natural-language query; bare keywords return little.
+
+    'since yesterday' is how Google encodes recency (the scraper has no
+    hours_old for google), which pairs with our 36h window + upsert dedupe.
+    """
+    return f"{term} jobs near {search.location} since yesterday"
+
+
 def _scrape_term(search: SearchConfig, term: str) -> Any:
     from jobspy import scrape_jobs
 
-    return scrape_jobs(
+    kwargs: dict[str, Any] = dict(
         site_name=list(search.sites),
         search_term=term,
         location=search.location,
@@ -149,6 +160,9 @@ def _scrape_term(search: SearchConfig, term: str) -> Any:
         linkedin_fetch_description=search.linkedin_fetch_description,
         verbose=0,
     )
+    if "google" in search.sites:
+        kwargs["google_search_term"] = _google_search_term(search, term)
+    return scrape_jobs(**kwargs)
 
 
 async def fetch_linkedin_indeed(

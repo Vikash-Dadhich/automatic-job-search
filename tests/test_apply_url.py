@@ -35,6 +35,16 @@ def test_classify_company_site() -> None:
     assert not is_automateable_apply_url(url)
 
 
+def test_classify_ziprecruiter_and_google() -> None:
+    zip_url = "https://www.ziprecruiter.com/jobs/acme/product-manager-intern"
+    assert classify_apply_url(zip_url) == ApplyKind.zip_recruiter
+    assert not is_automateable_apply_url(zip_url)
+
+    google_url = "https://www.google.com/search?q=jobs#htivrt=jobs"
+    assert classify_apply_url(google_url) == ApplyKind.google
+    assert not is_automateable_apply_url(google_url)
+
+
 def test_to_job_stamps_workday_tenant_from_linkedin_url() -> None:
     posting = RawPosting(
         source=Source.linkedin,

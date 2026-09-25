@@ -95,11 +95,29 @@ skills:
 
 preferences:
   titles:
+    # Product Management
     - "Product Manager Intern"
     - "Associate Product Manager Intern"
     - "MBA Product Management Intern"
-    - "Management Consultant Intern"
     - "Product Management Internship"
+    # Program & Project Management
+    - "Program Manager Intern"
+    - "Project Manager Intern"
+    - "Project Management Intern"
+    # Product Marketing
+    - "Product Marketing Manager Intern"
+    - "Product Marketing Intern"
+    # Strategy & GTM
+    - "Strategy Intern"
+    - "GTM Intern"
+    - "Go-to-Market Intern"
+    # Product Operations
+    - "Product Operations Intern"
+    # Customer Success
+    - "Customer Success Intern"
+    # Consulting
+    - "Management Consultant Intern"
+    - "Consulting Intern"
     - "Summer Intern"
   locations:
     - "Seattle, WA"

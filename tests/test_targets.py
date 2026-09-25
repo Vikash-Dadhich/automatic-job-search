@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from config.targets import WorkdayTenant, load_targets, parse_workday_url
+from config.targets import SearchConfig, WorkdayTenant, load_targets, parse_workday_url
 
 
 def test_parse_nvidia_careers_url() -> None:
@@ -52,6 +52,19 @@ def test_placeholder_tenant_skipped() -> None:
 def test_load_targets_defaults() -> None:
     load_targets.cache_clear()
     targets = load_targets()
-    assert targets.search.hours_old == 24
+    assert targets.search.hours_old == 36
     assert "linkedin" in targets.search.sites
     assert targets.active_workday_tenants() == []
+
+
+def test_search_config_accepts_all_supported_sites() -> None:
+    cfg = SearchConfig(
+        terms=["Product Manager Intern"],
+        sites=["linkedin", "indeed", "google", "zip_recruiter"],
+    )
+    assert cfg.sites == ["linkedin", "indeed", "google", "zip_recruiter"]
+
+
+def test_search_config_rejects_unknown_site() -> None:
+    with pytest.raises(ValueError, match="Unsupported sites"):
+        SearchConfig(terms=["x"], sites=["monster"])

@@ -16,6 +16,9 @@ from core.textmatch import (
 )
 from scraper.models import RawPosting
 
+# Word-boundary match so "international" / "internal" are not false-positives.
+_INTERN_WORD_RE = re.compile(r"\bintern(ship)?\b", re.IGNORECASE)
+
 _CLEARANCE_PATTERNS = (
     r"security clearance",
     r"active\s+(ts/?sci|top secret|secret)\b",
@@ -117,12 +120,48 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
             if re.search(pattern, haystack, re.IGNORECASE):
                 return FilterResult(False, f"staffing agency matched: {pattern}")
 
-    # Internship-only gate: title must contain "intern" or "internship".
+    # Internship-only gate: title must carry at least one internship signal.
+    # Positive signals: "intern/internship", "summer 202x", "new grad/graduate".
+    # Seniority words (senior/lead/staff/…) override a positive match and still
+    # drop the role — avoids "Senior PM, New Grad Program" sneaking through.
     # Enabled when INTERNSHIP_ONLY=true (summer internship search mode).
     if settings.internship_only:
         title_lower = (posting.title or "").lower()
-        if "intern" not in title_lower:
-            return FilterResult(False, "internship_only: title lacks 'intern'")
+        _INTERN_POSITIVE = (
+            "intern",
+            "internship",
+            "summer 2025",
+            "summer 2026",
+            "summer 2027",
+            "summer 2028",
+            "new grad",
+            "new graduate",
+        )
+        _INTERN_SENIORITY_BLOCK = (
+            "senior",
+            "sr.",
+            " lead ",
+            "lead ",
+            " staff ",
+            "staff ",
+            "principal",
+            "director",
+            "head of",
+            " vp ",
+            "vice president",
+        )
+        has_intern_word = bool(_INTERN_WORD_RE.search(posting.title or ""))
+        has_positive = has_intern_word or any(sig in title_lower for sig in _INTERN_POSITIVE)
+        # Seniority block only applies when we're relying on softer signals
+        # (new grad, summer 202x) — not when "intern/internship" is explicit.
+        # This preserves roles like "Summer VP Internship" (bank MBA programs).
+        has_seniority = (not has_intern_word) and any(
+            sig in title_lower for sig in _INTERN_SENIORITY_BLOCK
+        )
+        if not has_positive:
+            return FilterResult(False, "internship_only: no internship signal in title")
+        if has_seniority:
+            return FilterResult(False, f"internship_only: seniority word in title: {posting.title}")
 
     # Seniority mismatch (title-only — avoid matching inside descriptions)
     seniority = _seniority_reason(posting.title or "")

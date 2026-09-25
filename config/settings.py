@@ -53,6 +53,14 @@ class Settings(BaseSettings):
         default_factory=lambda: ["gemini-3.8-flash", "gemini-3.6-flash"],
         description="Models tried in order when the primary is overloaded/unavailable",
     )
+    score_budget: int | None = Field(
+        default=None,
+        description=(
+            "Max jobs to LLM-score per run. None = score all discovered. "
+            "Applied AFTER deterministic prerank, so the highest-potential jobs "
+            "are always scored and only the weakest tail is deferred to next run."
+        ),
+    )
     scorer_concurrency: int = Field(
         default=8,
         ge=1,

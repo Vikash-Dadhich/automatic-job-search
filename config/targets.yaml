@@ -1,20 +1,40 @@
 # Discovery targets for LinkedIn/Indeed (JobSpy) and Workday CXS tenants.
-# Search terms aligned to Product Management + Consulting.
+# Search terms cover 8 internship role families; all feed the same title filter
+# (intern/summer/new-grad positive signals + seniority block in filters.py).
 
 search:
   terms:
+    # -- Product Management --
     - "Product Manager Intern"
-    - "Product Management Internship"
     - "MBA Product Manager Intern"
+    # -- Program & Project Management --
+    - "Program Manager Intern"
+    - "Project Manager Intern"
+    # -- Product Marketing --
+    - "Product Marketing Intern"
+    # -- Strategy & GTM --
+    - "Strategy Intern"
+    - "Go-to-Market Intern"
+    # -- Product Operations --
+    - "Product Operations Intern"
+    # -- Customer Success --
+    - "Customer Success Intern"
+    # -- Consulting --
     - "Management Consultant Intern"
   sites:
     - linkedin
     - indeed
+    - google
+    - zip_recruiter
   location: "United States"
   distance: 50
-  results_wanted: 25
+  # Fetch depth per term per site. Higher = better recall (captures ranks 26-50)
+  # at low added LLM cost since the internship filter culls most before scoring.
+  results_wanted: 50
   country_indeed: "USA"
-  hours_old: 24
+  # 36h window (vs 24h) gives low-ranked good jobs more chances across runs;
+  # upsert dedupe prevents re-processing anything already seen.
+  hours_old: 36
   linkedin_fetch_description: true
 
 # Each entry needs a REAL careers or job deep-link URL.

@@ -39,6 +39,8 @@ def _tz_datetime(*, nullable: bool = False, default_factory: Any = None) -> Any:
 class Source(StrEnum):
     linkedin = "linkedin"
     indeed = "indeed"
+    google = "google"
+    zip_recruiter = "zip_recruiter"
     workday = "workday"
 
 
@@ -494,12 +496,14 @@ async def get_unsent_prep_pack_jobs(
     *,
     limit: int | None = None,
 ) -> list[Job]:
-    """Staged LinkedIn/Indeed jobs not yet included in a prep pack (score desc)."""
+    """Staged non-Workday (manual-apply) jobs not yet in a prep pack (score desc)."""
     statement = (
         select(Job)
         .where(
             col(Job.status) == Status.staged,
-            col(Job.source).in_([Source.linkedin, Source.indeed]),  # type: ignore[union-attr]
+            col(Job.source).in_(  # type: ignore[union-attr]
+                [Source.linkedin, Source.indeed, Source.google, Source.zip_recruiter]
+            ),
             col(Job.prep_pack_sent_at).is_(None),  # type: ignore[union-attr]
         )
         .order_by(col(Job.score).desc(), col(Job.id))

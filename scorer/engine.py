@@ -30,6 +30,7 @@ from scorer.clients import (
     system_blocks_to_text,
 )
 from scorer.outreach import generate_outreach as draft_outreach
+from scorer.prerank import prerank_jobs
 from scorer.prompts import build_scoring_system_blocks, build_scoring_user
 from scorer.schemas import SCORE_JSON_SCHEMA, Evaluation, ScoreRaw
 from scraper.filters import evaluate_job
@@ -315,6 +316,16 @@ class Scorer:
         if not jobs:
             log.info("score_pending_empty")
             return summary
+
+        # Prerank so the LLM budget is always spent best-first. When a
+        # score_budget is set, only the weakest tail is deferred to a later run.
+        jobs = prerank_jobs(jobs, profile)
+        budget = settings.score_budget
+        if budget is not None and len(jobs) > budget:
+            deferred = len(jobs) - budget
+            jobs = jobs[:budget]
+            summary.skipped += deferred
+            log.info("score_pending_budget_applied", budget=budget, deferred=deferred)
 
         semaphore = asyncio.Semaphore(workers)
         # Checked per job rather than per wave so stop_after_staged=2 never

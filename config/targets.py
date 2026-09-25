@@ -96,7 +96,7 @@ class SearchConfig(BaseModel):
     @field_validator("sites")
     @classmethod
     def validate_sites(cls, value: list[str]) -> list[str]:
-        allowed = {"linkedin", "indeed"}
+        allowed = {"linkedin", "indeed", "google", "zip_recruiter"}
         normalized = [s.lower().strip() for s in value]
         bad = [s for s in normalized if s not in allowed]
         if bad:

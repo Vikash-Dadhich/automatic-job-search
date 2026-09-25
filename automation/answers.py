@@ -79,6 +79,8 @@ def _split_name(full_name: str) -> tuple[str, str]:
 _SOURCE_LABELS = {
     Source.linkedin: "LinkedIn",
     Source.indeed: "Indeed",
+    Source.google: "Google",
+    Source.zip_recruiter: "ZipRecruiter",
     Source.workday: "Company career site",
 }
 
