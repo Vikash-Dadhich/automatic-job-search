@@ -1,4 +1,4 @@
-"""Full pipeline: ingest -> score -> resume -> suggest -> prep -> apply -> reviews -> alerts."""
+"""Full pipeline: ingest, score, resume, suggest, prep, apply, reviews, outcomes, alerts."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import structlog
 
 from automation.runner import apply_pending
 from bot.alerts import send_pending_alerts
+from bot.outcomes import send_pending_outcome_prompts
 from bot.prep import send_prep_pack
 from bot.review import send_pending_reviews
 from bot.suggest import send_pending_suggestions
@@ -28,6 +29,7 @@ _prepare_resumes = prepare_pending
 _send_prep_pack = send_prep_pack
 _apply_pending = apply_pending
 _send_pending_reviews = send_pending_reviews
+_send_outcome_prompts = send_pending_outcome_prompts
 _send_pending_alerts = send_pending_alerts
 _send_pending_suggestions = send_pending_suggestions
 
@@ -142,6 +144,12 @@ async def run_pipeline(
 
     summary = PipelineSummary()
     started = time.perf_counter()
+
+    async def _prep_stage() -> Any:
+        scoring = summary.stages.get("scoring")
+        raw_ids = getattr(scoring, "scored_ids", []) or []
+        return await _send_prep_pack(job_ids=list(raw_ids))
+
     log.info(
         "pipeline_start",
         enable_apply=do_apply,
@@ -171,7 +179,7 @@ async def run_pipeline(
         summary.skipped.append("benchmark")
 
     if do_prep:
-        await _run_stage(summary, "prep", _send_prep_pack)
+        await _run_stage(summary, "prep", _prep_stage)
     else:
         summary.skipped.append("prep")
         log.info("pipeline_stage_skipped", stage="prep")
@@ -184,11 +192,14 @@ async def run_pipeline(
 
     if do_reviews:
         await _run_stage(summary, "reviews", _send_pending_reviews)
+        await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
         await _run_stage(summary, "alerts", _send_pending_alerts)
     else:
         summary.skipped.append("reviews")
+        summary.skipped.append("outcome_prompts")
         summary.skipped.append("alerts")
         log.info("pipeline_stage_skipped", stage="reviews")
+        log.info("pipeline_stage_skipped", stage="outcome_prompts")
         log.info("pipeline_stage_skipped", stage="alerts")
 
     summary.duration_ms = int((time.perf_counter() - started) * 1000)

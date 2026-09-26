@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 
 from config.settings import Settings, get_settings
+from scorer.clients import OpenAIClient
 from scorer.engine import (
-    AnthropicClient,
     GeminiClient,
     _system_blocks_to_text,
     build_llm_client,
@@ -77,52 +77,129 @@ class _FakeGenaiClient:
     aio: _FakeAio = field(default_factory=_FakeAio)
 
 
-def test_active_models_gemini_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_active_models_ignore_other_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_SCORER_MODEL", "gemini-3.6-flash")
-    monkeypatch.setenv("GEMINI_WRITER_MODEL", "gemini-3.6-flash")
+    monkeypatch.setenv("OPENAI_SCORER_MODEL", "gpt-5-mini")
+    monkeypatch.setenv("OPENAI_WRITER_MODEL", "gpt-5-mini")
     get_settings.cache_clear()
     settings = get_settings()
-    assert settings.llm_provider == "gemini"
-    assert settings.active_scorer_model == "gemini-3.6-flash"
-    assert settings.active_writer_model == "gemini-3.6-flash"
+    assert settings.active_scorer_model == "gpt-5-mini"
+    assert settings.active_writer_model == "gpt-5-mini"
     get_settings.cache_clear()
 
 
-def test_active_models_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_active_models_ignore_anthropic_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     monkeypatch.setenv("SCORER_MODEL", "claude-haiku-test")
-    monkeypatch.setenv("WRITER_MODEL", "claude-sonnet-test")
+    monkeypatch.setenv("OPENAI_SCORER_MODEL", "gpt-5-mini")
     get_settings.cache_clear()
     settings = get_settings()
-    assert settings.active_scorer_model == "claude-haiku-test"
-    assert settings.active_writer_model == "claude-sonnet-test"
+    assert settings.active_scorer_model == "gpt-5-mini"
     get_settings.cache_clear()
 
 
-def test_build_llm_client_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_llm_client_always_openai(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "gemini")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     get_settings.cache_clear()
     client = build_llm_client()
-    assert isinstance(client, GeminiClient)
+    assert isinstance(client, OpenAIClient)
     get_settings.cache_clear()
 
 
-def test_build_llm_client_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_llm_client_ignores_anthropic_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     get_settings.cache_clear()
     client = build_llm_client()
-    assert isinstance(client, AnthropicClient)
+    assert isinstance(client, OpenAIClient)
     get_settings.cache_clear()
 
 
-def test_build_llm_client_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_llm_client_unknown_provider_still_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "bogus")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    get_settings.cache_clear()
+    client = build_llm_client()
+    assert isinstance(client, OpenAIClient)
+    get_settings.cache_clear()
+
+
+def test_build_llm_client_openai_requires_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_API_KEY", "")
     get_settings.cache_clear()
-    with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
         build_llm_client()
+    get_settings.cache_clear()
+
+
+async def test_openai_client_scores_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_SCORER_MODEL", "gpt-5-mini")
+    get_settings.cache_clear()
+
+    @dataclass
+    class _Msg:
+        content: str
+
+    @dataclass
+    class _Choice:
+        message: _Msg
+
+    @dataclass
+    class _Details:
+        cached_tokens: int = 4
+
+    @dataclass
+    class _Usage:
+        prompt_tokens: int = 20
+        completion_tokens: int = 6
+        prompt_tokens_details: _Details = field(default_factory=_Details)
+
+    @dataclass
+    class _Response:
+        choices: list[_Choice]
+        usage: _Usage = field(default_factory=_Usage)
+
+    class _Completions:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create(self, **kwargs: Any) -> _Response:
+            self.calls.append(kwargs)
+            return _Response(choices=[_Choice(message=_Msg(content='{"s":80,"t":2,"r":["fit"]}'))])
+
+    class _Chat:
+        def __init__(self) -> None:
+            self.completions = _Completions()
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.chat = _Chat()
+
+    fake = _Fake()
+    from scorer.clients import OpenAIClient
+
+    client = OpenAIClient(client=fake)
+    text = await client.complete(
+        model="gpt-5-mini",
+        system_blocks=[{"text": "Return ONLY compact JSON."}],
+        user="Score this job",
+        max_tokens=256,
+        temperature=0.0,
+        json_mode=True,
+    )
+    assert text == '{"s":80,"t":2,"r":["fit"]}'
+    call = fake.chat.completions.calls[0]
+    assert call["model"] == "gpt-5-mini"
+    assert call["response_format"] == {"type": "json_object"}
+    assert call["reasoning_effort"] == "minimal"
+    assert call["messages"][0]["content"] == "Return ONLY compact JSON."
+    assert client.usage.prompt_tokens == 20
+    assert client.usage.completion_tokens == 6
+    assert client.usage.cached_tokens == 4
     get_settings.cache_clear()
 
 
@@ -179,8 +256,11 @@ async def test_gemini_client_complete_maps_system_blocks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gemini_client_falls_back_when_model_unavailable() -> None:
+async def test_gemini_client_falls_back_when_model_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A 503 on the primary model must roll over to the configured fallback."""
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
     get_settings.cache_clear()
     fake = _FakeGenaiClient()
     fake.aio.models.fail_models = {"gemini-primary"}
@@ -228,9 +308,9 @@ def test_settings_defaults_provider_gemini() -> None:
         llm_provider="gemini",
     )
     assert settings.llm_provider == "gemini"
-    assert settings.gemini_scorer_model == "gemini-3.6-flash"
-    assert settings.gemini_writer_model == "gemini-3.1-pro-preview"
-    assert settings.active_scorer_model == "gemini-3.6-flash"
+    assert settings.openai_scorer_model == "gpt-5-mini"
+    assert settings.active_scorer_model == "gpt-5-mini"
+    assert settings.active_writer_model == "gpt-5-mini"
     assert settings.scorer_concurrency == 8
     assert settings.gemini_scorer_thinking_level == "low"
     assert settings.gemini_writer_thinking_level == "high"

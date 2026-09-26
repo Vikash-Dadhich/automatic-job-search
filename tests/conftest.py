@@ -13,6 +13,20 @@ from config.targets import load_targets
 from core.db import init_db, reset_engine
 
 
+@pytest.fixture(autouse=True)
+def _disable_apply_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite off the 7–18 minute Workday gap unless a test opts in."""
+    monkeypatch.setenv("APPLY_PACING_ENABLED", "false")
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _disable_vector_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep scoring offline unless a test opts into the embedding gate."""
+    monkeypatch.setenv("VECTOR_GATE_ENABLED", "false")
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Point DATABASE_URL at a temp sqlite file and clear cached settings/engine."""

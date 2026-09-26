@@ -54,7 +54,8 @@ def test_load_targets_defaults() -> None:
     targets = load_targets()
     assert targets.search.hours_old == 36
     assert "linkedin" in targets.search.sites
-    assert targets.active_workday_tenants() == []
+    names = [tenant.name for tenant in targets.active_workday_tenants()]
+    assert names == ["NVIDIA", "Salesforce", "Workday", "Zillow", "Boeing", "Adobe"]
 
 
 def test_search_config_accepts_all_supported_sites() -> None:

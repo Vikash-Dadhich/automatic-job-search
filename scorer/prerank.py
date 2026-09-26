@@ -17,7 +17,9 @@ from datetime import UTC, datetime
 
 from config.profile import Profile
 from core.db import Job, Source
-from core.textmatch import company_matches
+from core.textmatch import company_matches, is_remote_location, location_matches
+
+__all__ = ["prerank_jobs", "prerank_score"]
 
 _INTERN_WORD_RE = re.compile(r"\bintern(ship)?\b", re.IGNORECASE)
 _SUMMER_RE = re.compile(r"\bsummer\s*20\d{2}\b", re.IGNORECASE)
@@ -51,6 +53,20 @@ _SOURCE_WEIGHT = {
 }
 
 
+def _source_weight(source: Source | str | None) -> float:
+    """Map a job source to a rank weight. Unknown values score as 1.0."""
+    if isinstance(source, Source):
+        src: Source | None = source
+    else:
+        try:
+            src = Source(source) if source else None
+        except ValueError:
+            return 1.0
+    if src is None:
+        return 1.0
+    return _SOURCE_WEIGHT.get(src, 1.0)
+
+
 def prerank_score(job: Job, profile: Profile) -> float:
     """Cheap 0..~100 heuristic; higher = score sooner. No network, no LLM."""
     title = job.title or ""
@@ -81,18 +97,16 @@ def prerank_score(job: Job, profile: Profile) -> float:
             score += 30.0
             break
 
-    # Location preference.
-    location = (job.location or "").lower()
+    # Location preference (city+state aware; whole-word remote).
+    location = job.location or ""
     if location:
         on_site_prefs = [p for p in prefs.locations if p.strip().lower() != "remote"]
-        if any(p.lower() in location for p in on_site_prefs):
+        if any(location_matches(location, p) for p in on_site_prefs):
             score += 8.0
-        if prefs.remote_ok and "remote" in location:
+        if prefs.remote_ok and is_remote_location(location):
             score += 5.0
 
-    # Source weight.
-    src = job.source if isinstance(job.source, Source) else Source(job.source)
-    score += _SOURCE_WEIGHT.get(src, 1.0)
+    score += _source_weight(job.source)
 
     # Recency: fresher postings first.
     posted = job.posted_at or job.discovered_at

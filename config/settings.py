@@ -25,10 +25,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # LLM provider: "gemini" (default) or "anthropic"
+    # Scoring always uses OpenAI.
     llm_provider: str = Field(
-        default="gemini",
-        description="Active LLM backend: gemini | anthropic",
+        default="openai",
+        description="Kept for old env files. Scoring always uses OpenAI.",
     )
 
     # Gemini (default provider)
@@ -56,11 +56,18 @@ class Settings(BaseSettings):
     score_budget: int | None = Field(
         default=None,
         description=(
-            "Max jobs to LLM-score per run. None = score all discovered. "
+            "Max jobs to send into the scorer per run. None = score all discovered. "
             "Applied AFTER deterministic prerank, so the highest-potential jobs "
-            "are always scored and only the weakest tail is deferred to next run."
+            "are always scored and only the weakest tail is deferred to next run. "
+            "When the vector gate is on, semantic rejects do not consume a slot."
         ),
     )
+    vector_gate_enabled: bool = True
+    vector_threshold: float = Field(default=0.50, ge=0, le=1)
+    vector_dimensions: int = Field(default=768, ge=1)
+    openai_embedding_model: str = "text-embedding-3-small"
+    vector_batch_size: int = Field(default=16, ge=1, le=100)
+    vector_max_chars: int = Field(default=6000, ge=40)
     scorer_concurrency: int = Field(
         default=8,
         ge=1,
@@ -98,6 +105,17 @@ class Settings(BaseSettings):
         description="Stronger Anthropic model for outreach / open-ended answers",
     )
 
+    # OpenAI is the only scoring and embedding provider.
+    openai_api_key: str = Field(default="", description="OpenAI API key")
+    openai_scorer_model: str = Field(
+        default="gpt-5-mini",
+        description="Model for high-volume 0-100 scoring",
+    )
+    openai_writer_model: str = Field(
+        default="gpt-5-mini",
+        description="Model for outreach / open-ended answers",
+    )
+
     # Telegram (Step 6+)
     telegram_bot_token: str | None = None
     telegram_chat_id: str | None = None
@@ -118,6 +136,13 @@ class Settings(BaseSettings):
         ge=0,
         le=100,
         description="Minimum score for Tier 2; below this is Tier 3 (filtered out)",
+    )
+    tier_one_drafts_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, Tier 1 jobs also get an outreach note and a cover letter. "
+            "Off keeps scoring to the score call only."
+        ),
     )
     max_jd_chars: int = Field(
         default=9000,
@@ -156,6 +181,11 @@ class Settings(BaseSettings):
         default=3,
         ge=0,
         description="Years above the candidate's experience still considered reachable",
+    )
+    company_cooldown_days: int = Field(
+        default=30,
+        ge=1,
+        description="Days after a submission before the same company is re-eligible",
     )
 
     # Database — SQLite for local/tests; Neon Postgres for cron / production:
@@ -251,6 +281,11 @@ class Settings(BaseSettings):
     typing_delay_ms_max: int = Field(default=90, ge=0)
     credentials_path: Path = Path("config/credentials.yaml")
     apply_limit: int = Field(default=10, ge=1)
+    apply_pacing_enabled: bool = True
+    apply_gap_min_s: int = Field(default=420, ge=0)
+    apply_gap_max_s: int = Field(default=1080, ge=0)
+    apply_gap_multiplier_cap: int = Field(default=8, ge=1)
+    apply_clean_streak: int = Field(default=3, ge=1)
 
     log_level: str = "INFO"
 
@@ -293,17 +328,13 @@ class Settings(BaseSettings):
 
     @property
     def active_scorer_model(self) -> str:
-        """Model id used for scoring under the configured LLM provider."""
-        if self.llm_provider.strip().lower() == "gemini":
-            return self.gemini_scorer_model
-        return self.scorer_model
+        """Model id used for scoring. Always the OpenAI scorer."""
+        return self.openai_scorer_model
 
     @property
     def active_writer_model(self) -> str:
-        """Model id used for outreach / open-ended answers under the configured provider."""
-        if self.llm_provider.strip().lower() == "gemini":
-            return self.gemini_writer_model
-        return self.writer_model
+        """Model id used for outreach / open-ended answers. Always OpenAI."""
+        return self.openai_writer_model
 
     @property
     def is_gemini(self) -> bool:

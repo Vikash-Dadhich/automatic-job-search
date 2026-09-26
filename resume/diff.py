@@ -159,7 +159,7 @@ async def draft_proposed_text_llm(
         from scorer.prompts import BANNED_WORDS
 
         settings = get_settings()
-        llm = client or build_llm_client(settings)
+        llm = client or build_llm_client()
 
         if best_bullet:
             prompt = (
@@ -178,13 +178,23 @@ async def draft_proposed_text_llm(
 
         forbidden = ", ".join(sorted(BANNED_WORDS)[:20])
         text = await llm.complete(
-            system=f"You write terse, factual resume bullets. Forbidden words: {forbidden}.",
+            model=settings.active_scorer_model,
+            system_blocks=[
+                {
+                    "type": "text",
+                    "text": (
+                        "You write terse, factual resume bullets. "
+                        f"Forbidden words: {forbidden}."
+                    ),
+                }
+            ],
             user=prompt,
             max_tokens=80,
+            temperature=0.3,
             thinking_level=settings.gemini_scorer_thinking_level,
         )
         text = text.strip().strip('"').strip()
-        if not text or len(text) > 200:
+        if not text or len(text) > 200 or text[0] in "[{":
             raise ValueError("Bad LLM output")
         return text
     except Exception as exc:

@@ -35,6 +35,10 @@ storage/screenshots/*
 storage/prep_packs/*
 !storage/prep_packs/.gitkeep
 
+# Graphify: commit the graph, skip local cache and spend logs
+graphify-out/cost.json
+graphify-out/cache/
+
 # IDE / tooling
 .idea/
 .vscode/

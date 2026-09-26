@@ -59,14 +59,17 @@ def build_review_caption(job: Job, *, max_len: int = CAPTION_MAX) -> str:
     """Compact review caption fitting Telegram photo caption limits."""
     tier = job.tier.value if job.tier else "?"
     score = job.score if job.score is not None else "?"
+    source = job.source.value if job.source else "?"
     lines = [
         f"{job.title} @ {job.company}",
         f"Location: {job.location or 'N/A'}",
-        f"Score: {score} | Tier: {tier} | Source: {job.source.value}",
+        f"Score: {score} | Tier: {tier} | Source: {source}",
         f"URL: {job.url}",
     ]
     if job.tier and job.tier.value == "one" and job.outreach_draft:
         lines.append("Outreach draft ready (Tier 1).")
+    if job.cover_letter:
+        lines.append("Cover letter ready (Tier 1).")
     if job.justification:
         reasons = "; ".join(job.justification[:3])
         lines.append(f"Why: {reasons}")
@@ -99,6 +102,17 @@ def format_answers_message(job: Job, *, max_len: int = MESSAGE_MAX) -> str | Non
         else:
             lines.append(f"• {q}\n  → (blank)")
     text = "\n".join(lines)
+    if len(text) > max_len:
+        text = text[: max_len - 1] + "…"
+    return text
+
+
+def format_cover_letter_message(job: Job, *, max_len: int = MESSAGE_MAX) -> str | None:
+    """Follow-up text with the stored cover letter, if one was drafted."""
+    letter = (job.cover_letter or "").strip()
+    if not letter:
+        return None
+    text = f"Cover letter for job #{job.id}:\n\n{letter}"
     if len(text) > max_len:
         text = text[: max_len - 1] + "…"
     return text
@@ -173,6 +187,13 @@ async def _send_one(client: TelegramClient, job: Job) -> None:
             await client.send_message(answers_text, chat_id=chat_id or None)
         except Exception as exc:
             log.warning("send_answers_followup_failed", job_id=job.id, error=str(exc))
+
+    letter_text = format_cover_letter_message(job)
+    if letter_text:
+        try:
+            await client.send_message(letter_text, chat_id=chat_id or None)
+        except Exception as exc:
+            log.warning("send_cover_letter_followup_failed", job_id=job.id, error=str(exc))
 
     now = datetime.now(UTC)
     async with session_scope() as session:

@@ -6,11 +6,14 @@ stored URL already points at a company Workday careers page (job_url_direct).
 
 from __future__ import annotations
 
+import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
 
+from automation.pacing import acquire, is_pace_blocker, note_pace_block, note_success
 from automation.workday import Applicator, ApplyResult, BlockerError, WorkdayApplicator
 from config.profile import Profile, load_profile
 from config.settings import get_settings
@@ -34,6 +37,7 @@ class ApplySummary:
     pending_review: int = 0
     manual_review: int = 0
     skipped: int = 0
+    blackout_skipped: int = 0
     errors: int = 0
     error_details: list[str] = field(default_factory=list)
 
@@ -94,6 +98,9 @@ class ApplyRunner:
         *,
         limit: int | None = None,
         applicator: Applicator | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+        rng: random.Random | None = None,
+        now: datetime | None = None,
     ) -> ApplySummary:
         await init_db()
         settings = get_settings()
@@ -123,10 +130,19 @@ class ApplyRunner:
                 )
                 continue
 
+            if settings.apply_pacing_enabled:
+                slot = await acquire("workday", now=now, sleep=sleep, rng=rng)
+                if slot.skip:
+                    summary.blackout_skipped += 1
+                    log.info("apply_platform_blackout", job_id=job.id, platform="workday")
+                    continue
+
             try:
                 job = await _ensure_tenant(job)
                 result = await applicator.apply(job)
                 await self._persist_success(job, result)
+                if settings.apply_pacing_enabled:
+                    await note_success("workday", now=now)
                 summary.applied += 1
                 summary.pending_review += 1
             except BlockerError as exc:
@@ -136,6 +152,8 @@ class ApplyRunner:
                     error=str(exc),
                     screenshot=exc.screenshot_path,
                 )
+                if settings.apply_pacing_enabled and is_pace_blocker(str(exc)):
+                    await note_pace_block("workday", now=now)
                 await self._persist_blocker(job, exc)
                 summary.manual_review += 1
             except Exception as exc:
@@ -150,6 +168,7 @@ class ApplyRunner:
             pending_review=summary.pending_review,
             manual_review=summary.manual_review,
             skipped=summary.skipped,
+            blackout_skipped=summary.blackout_skipped,
             errors=summary.errors,
         )
         return summary
@@ -212,9 +231,15 @@ async def apply_pending(
     limit: int | None = None,
     applicator: Applicator | None = None,
     profile: Profile | None = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+    rng: random.Random | None = None,
+    now: datetime | None = None,
 ) -> ApplySummary:
     """Module-level entry point used by README / Step 7."""
     return await ApplyRunner(applicator=applicator, profile=profile).apply_pending(
         limit=limit,
         applicator=applicator,
+        sleep=sleep,
+        rng=rng,
+        now=now,
     )

@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
+from sqlmodel import col, select
 
 from bot.telegram import TelegramClient
 from config.profile import Profile, load_profile
 from config.settings import get_settings
 from core.db import (
     Job,
+    Status,
     get_job_by_id,
     get_unsent_prep_pack_jobs,
     init_db,
@@ -19,9 +21,54 @@ from core.db import (
 )
 from prep.builder import generate_prep_pack
 from scorer.engine import LLMClient
-from scraper.filters import sponsorship_signal
 
 log = structlog.get_logger(__name__)
+
+STRONG_SCORE = 75
+FILL_FLOOR = 60
+SHORTLIST_FLOOR_COUNT = 20
+
+
+def select_shortlist(jobs: list[Job]) -> list[Job]:
+    """All scores above 75. If that is under 20, fill from scores of at least 60."""
+    eligible = [
+        job for job in jobs if job.score is not None and job.prep_pack_sent_at is None
+    ]
+
+    def _score(job: Job) -> int:
+        return job.score if job.score is not None else 0
+
+    strong = sorted(
+        (job for job in eligible if _score(job) > STRONG_SCORE),
+        key=lambda job: (-_score(job), job.id or 0),
+    )
+    if len(strong) >= SHORTLIST_FLOOR_COUNT:
+        return strong
+    fill = sorted(
+        (job for job in eligible if FILL_FLOOR <= _score(job) <= STRONG_SCORE),
+        key=lambda job: (-_score(job), job.id or 0),
+    )
+    need = SHORTLIST_FLOOR_COUNT - len(strong)
+    return strong + fill[:need]
+
+
+def render_shortlist(jobs: list[Job]) -> str:
+    """Plain-text shortlist. Fill-band rows are marked so a 70 is not read as a 90."""
+    lines: list[str] = []
+    for index, job in enumerate(jobs, 1):
+        score = int(job.score or 0)
+        band = "" if score > STRONG_SCORE else "  [fill]"
+        lines.append(
+            f"{index}. {score}{band}  {job.title} @ {job.company}\n"
+            f"    {job.location or 'N/A'}\n"
+            f"    {job.url}"
+        )
+    return "\n\n".join(lines)
+
+
+def shortlist_caption(jobs: list[Job]) -> str:
+    strong = sum(1 for job in jobs if (job.score or 0) > STRONG_SCORE)
+    return f"{len(jobs)} leads, {strong} above 75"
 
 
 @dataclass
@@ -35,73 +82,79 @@ class PrepSummary:
     pdf_path: str | None = None
 
 
-_VISA_EMOJI = {
-    "friendly": "🟢 Sponsors visa",
-    "hostile": "🔴 No sponsorship",  # should not reach brief (filtered at ingest)
-    "unknown": "⚠️ Sponsorship not mentioned — verify before applying",
-}
+async def _load_scored(job_ids: list[int]) -> list[Job]:
+    found: list[Job] = []
+    async with session_scope() as session:
+        for job_id in job_ids:
+            job = await get_job_by_id(session, job_id)
+            if job is not None:
+                found.append(job)
+    return found
 
 
-def _brief_message(jobs: list[Job]) -> str:
-    """Compact job list — no LLM, no PDF, just the 6 fields the user wants."""
-    lines: list[str] = [f"🔍 {len(jobs)} new internship lead(s)\n"]
-    for i, job in enumerate(jobs, 1):
-        tier_num = job.tier.value if job.tier else "?"
-        visa_status = sponsorship_signal(job.description_clean or "")
-        visa_line = _VISA_EMOJI.get(visa_status, "⚠️ Sponsorship unknown")
-        lines.append(
-            f"{i}. {job.title} @ {job.company}\n"
-            f"   📍 {job.location or 'N/A'}\n"
-            f"   Score / Tier: {job.score} / {tier_num}\n"
-            f"   Source: {job.source.value if job.source else '?'}\n"
-            f"   🛂 {visa_line}\n"
-            f"   🔗 {job.url}\n"
+async def _unsent_scored_jobs() -> list[Job]:
+    async with session_scope() as session:
+        result = await session.exec(
+            select(Job).where(
+                col(Job.score).is_not(None),  # type: ignore[union-attr]
+                col(Job.prep_pack_sent_at).is_(None),  # type: ignore[union-attr]
+                col(Job.status).in_([Status.staged, Status.filtered_out]),  # type: ignore[union-attr]
+            )
         )
-    return "\n".join(lines).strip()
+        return list(result.all())
 
 
-async def _send_brief(
+async def _mark_sent(jobs: list[Job], now: datetime) -> None:
+    for job in jobs:
+        if job.id is None:
+            continue
+        try:
+            async with session_scope() as session:
+                target = await get_job_by_id(session, job.id)
+                if target is None or target.prep_pack_sent_at is not None:
+                    continue
+                target.prep_pack_sent_at = now
+                target.updated_at = now
+                session.add(target)
+        except Exception as exc:
+            log.warning("prep_pack_mark_failed", job_id=job.id, error=str(exc))
+
+
+async def _send_shortlist_document(
     jobs: list[Job],
     client: TelegramClient,
 ) -> PrepSummary:
-    """Send a compact text message — no LLM calls, no file uploads."""
+    """One text file for the run. Empty input sends nothing."""
     summary = PrepSummary()
-    # Telegram message limit is 4096 chars; chunk if needed.
-    CHUNK = 15
-    chunks = [jobs[i : i + CHUNK] for i in range(0, len(jobs), CHUNK)]
-    now = datetime.now(UTC)
-    for chunk in chunks:
-        text = _brief_message(chunk)
-        try:
-            await client.send_message(text)
-            summary.sent += 1
-        except Exception as exc:
-            log.warning("prep_pack_brief_send_failed", error=str(exc))
-            summary.errors += 1
-            summary.error_details.append(f"telegram: {exc}")
-            return summary
+    if not jobs:
+        summary.skipped = 1
+        log.info("send_prep_pack_empty")
+        return summary
 
-        for job in chunk:
-            if job.id is None:
-                continue
-            try:
-                async with session_scope() as session:
-                    target = await get_job_by_id(session, job.id)
-                    if target is None or target.prep_pack_sent_at is not None:
-                        continue
-                    target.prep_pack_sent_at = now
-                    target.updated_at = now
-                    session.add(target)
-            except Exception as exc:
-                log.warning("prep_pack_mark_failed", job_id=job.id, error=str(exc))
+    settings = get_settings()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = settings.prep_packs_path / f"shortlist_{stamp}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_shortlist(jobs), encoding="utf-8")
+    caption = shortlist_caption(jobs)
+    try:
+        await client.send_document(path, caption=caption)
+    except Exception as exc:
+        log.warning("prep_pack_send_failed", error=str(exc))
+        summary.errors += 1
+        summary.error_details.append(f"telegram: {exc}")
+        return summary
 
+    await _mark_sent(jobs, datetime.now(UTC))
+    summary.sent = 1
     summary.jobs = len(jobs)
+    summary.markdown_path = str(path)
     log.info(
         "send_prep_pack_complete",
-        mode="brief",
+        mode="shortlist",
         jobs=summary.jobs,
-        sent=summary.sent,
-        errors=summary.errors,
+        above_75=sum(1 for job in jobs if (job.score or 0) > STRONG_SCORE),
+        path=str(path),
     )
     return summary
 
@@ -112,14 +165,14 @@ async def send_prep_pack(
     profile: Profile | None = None,
     llm_client: LLMClient | None = None,
     limit: int | None = None,
+    job_ids: list[int] | None = None,
 ) -> PrepSummary:
     """Build and send a prep pack for unsent staged LinkedIn/Indeed jobs.
 
-    Brief mode (PREP_PACK_BRIEF=true): sends a compact Telegram text message with
-    just title, location, score, source and URL — no LLM calls, no PDF.
+    Brief mode sends one shortlist text file: every score above 75, then
+    scores of at least 60 until the file has 20. Nothing under 60 is included.
 
-    Full mode (default): generates LLM-drafted answers + Typst PDF + Markdown.
-    Switch back by setting PREP_PACK_BRIEF=false.
+    Full mode (PREP_PACK_BRIEF=false): LLM-drafted answers + Typst PDF + Markdown.
 
     ``limit`` defaults to ``settings.prep_pack_limit`` (20).
     """
@@ -129,6 +182,13 @@ async def send_prep_pack(
     summary = PrepSummary()
 
     settings = get_settings()
+    if settings.prep_pack_brief:
+        if job_ids is not None:
+            pool = await _load_scored(job_ids)
+        else:
+            pool = await _unsent_scored_jobs()
+        return await _send_shortlist_document(select_shortlist(pool), client)
+
     effective_limit = limit if limit is not None else settings.prep_pack_limit
 
     async with session_scope() as session:
@@ -138,10 +198,6 @@ async def send_prep_pack(
         log.info("send_prep_pack_empty")
         summary.skipped = 1
         return summary
-
-    # --- Brief mode: no LLM, no PDF ----------------------------------------
-    if settings.prep_pack_brief:
-        return await _send_brief(jobs, client)
 
     # --- Full mode: LLM essay drafting + Typst PDF --------------------------
     try:

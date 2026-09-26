@@ -40,7 +40,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         order.append("suggest_send")
         return _FakeSummary("suggest_send")
 
-    async def fake_prep() -> _FakeSummary:
+    async def fake_prep(*_args: object, **_kwargs: object) -> _FakeSummary:
         order.append("prep")
         return _FakeSummary("prep")
 
@@ -51,6 +51,10 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     async def fake_reviews() -> _FakeSummary:
         order.append("reviews")
         return _FakeSummary("reviews")
+
+    async def fake_outcomes() -> _FakeSummary:
+        order.append("outcome_prompts")
+        return _FakeSummary("outcome_prompts")
 
     async def fake_alerts() -> _FakeSummary:
         order.append("alerts")
@@ -69,6 +73,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(pipeline_mod, "_send_prep_pack", fake_prep)
     monkeypatch.setattr(pipeline_mod, "_apply_pending", fake_apply)
     monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", fake_reviews)
+    monkeypatch.setattr(pipeline_mod, "_send_outcome_prompts", fake_outcomes)
     monkeypatch.setattr(pipeline_mod, "_send_pending_alerts", fake_alerts)
 
     summary = await run_pipeline(
@@ -88,6 +93,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         "prep",
         "apply",
         "reviews",
+        "outcome_prompts",
         "alerts",
     ]
     assert set(summary.stages) == {
@@ -100,6 +106,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         "prep",
         "apply",
         "reviews",
+        "outcome_prompts",
         "alerts",
     }
     assert summary.stage_errors == {}
@@ -143,6 +150,7 @@ async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch)
         "prep",
         "apply",
         "reviews",
+        "outcome_prompts",
         "alerts",
     ]
     assert "apply" not in summary.stages
@@ -175,9 +183,14 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         pipeline_mod, "_benchmark_tier_one_stage", lambda: ok("benchmark")
     )
-    monkeypatch.setattr(pipeline_mod, "_send_prep_pack", lambda: ok("prep"))
+    monkeypatch.setattr(
+        pipeline_mod, "_send_prep_pack", lambda *_a, **_k: ok("prep")
+    )
     monkeypatch.setattr(pipeline_mod, "_apply_pending", lambda: ok("apply"))
     monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", lambda: ok("reviews"))
+    monkeypatch.setattr(
+        pipeline_mod, "_send_outcome_prompts", lambda: ok("outcome_prompts")
+    )
     monkeypatch.setattr(pipeline_mod, "_send_pending_alerts", lambda: ok("alerts"))
 
     summary = await run_pipeline(
@@ -197,6 +210,7 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
         "prep",
         "apply",
         "reviews",
+        "outcome_prompts",
         "alerts",
     ]
     assert "scoring" in summary.stage_errors

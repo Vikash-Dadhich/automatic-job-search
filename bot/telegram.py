@@ -16,6 +16,7 @@ from tenacity import (
 )
 
 from config.settings import get_settings
+from core.db import Outcome
 
 log = structlog.get_logger(__name__)
 
@@ -173,6 +174,31 @@ def is_suggest_callback(data: str) -> bool:
     return (data or "").startswith("s1|")
 
 
+def encode_outcome_callback(outcome: Outcome | str, job_id: int) -> str:
+    """Encode outcome callback_data: o1|<outcome>|<job_id> (<=64 bytes)."""
+    label = outcome if isinstance(outcome, Outcome) else Outcome(outcome)
+    if job_id < 0:
+        raise ValueError("job_id must be non-negative")
+    data = f"o1|{label.value}|{job_id}"
+    if len(data.encode("utf-8")) > CALLBACK_MAX_BYTES:
+        raise ValueError(f"callback_data exceeds {CALLBACK_MAX_BYTES} bytes: {data!r}")
+    return data
+
+
+def decode_outcome_callback(data: str) -> tuple[Outcome, int]:
+    """Decode outcome callback_data into (outcome, job_id)."""
+    parts = (data or "").strip().split("|")
+    if len(parts) != 3 or parts[0] != "o1":
+        raise ValueError(f"Invalid outcome callback_data: {data!r}")
+    outcome = Outcome(parts[1])
+    job_id = int(parts[2])
+    return outcome, job_id
+
+
+def is_outcome_callback(data: str) -> bool:
+    return (data or "").startswith("o1|")
+
+
 class TelegramClient:
     """High-level Telegram helpers used by review / handlers / poller."""
 
@@ -307,6 +333,28 @@ class TelegramClient:
         if parse_mode:
             payload["parse_mode"] = parse_mode
         result = await self._resolve_transport().post("editMessageCaption", payload)
+        return result.get("result") or {}
+
+    async def edit_message_text(
+        self,
+        *,
+        chat_id: str | int,
+        message_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+        parse_mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Edit a text message. Outcome cards are text, not photos."""
+        payload: dict[str, Any] = {
+            "chat_id": str(chat_id),
+            "message_id": message_id,
+            "text": text,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        result = await self._resolve_transport().post("editMessageText", payload)
         return result.get("result") or {}
 
     async def edit_message_reply_markup(

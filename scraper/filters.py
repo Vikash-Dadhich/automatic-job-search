@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 from config.profile import Profile
 from config.settings import get_settings
@@ -63,7 +64,8 @@ _SPONSORSHIP_FRIENDLY_PATTERNS = (
     r"we\s+(?:do\s+)?(?:offer|provide)\s+(?:visa\s+)?sponsorship",
     r"sponsorship\s+(?:is\s+)?(?:available|provided|offered)",
     r"open\s+to\s+(?:visa\s+)?sponsorship",
-    r"we\s+(?:will\s+)?sponsor\b",
+    # Require a visa/auth object so "we sponsor employee events" is not friendly.
+    r"we\s+(?:will\s+)?sponsor\s+(?:your\s+)?(?:visa|h-?1|work\s+auth)",
     # OPT/CPT/F-1 friendly signals common in internship JDs
     r"\bopt(?:\s*/\s*cpt)?\s+(?:friendly|accepted|welcome|eligible|ok|okay|students?\s+welcome)\b",
     r"\bcpt(?:\s*/\s*opt)?\s+(?:friendly|accepted|welcome|eligible|ok|okay)\b",
@@ -97,6 +99,21 @@ def sponsorship_signal(text: str) -> str:
         if re.search(pattern, haystack, re.IGNORECASE):
             return "friendly"
     return "unknown"
+
+
+# Current year through this many years ahead, so "Summer 2029" still matches
+# after the calendar rolls past a hardcoded list.
+_SUMMER_LOOKAHEAD_YEARS = 3
+_SOFT_INTERN_SIGNALS = ("new grad", "new graduate")
+
+
+def _soft_internship_signals(today: datetime | None = None) -> tuple[str, ...]:
+    """Title phrases that count as internships when the word 'intern' is absent."""
+    year = (today or datetime.now()).year
+    summers = tuple(
+        f"summer {y}" for y in range(year, year + _SUMMER_LOOKAHEAD_YEARS + 1)
+    )
+    return summers + _SOFT_INTERN_SIGNALS
 
 
 def _seniority_reason(title: str) -> str | None:
@@ -168,16 +185,8 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
     # Enabled when INTERNSHIP_ONLY=true (summer internship search mode).
     if settings.internship_only:
         title_lower = (posting.title or "").lower()
-        _INTERN_POSITIVE = (
-            "intern",
-            "internship",
-            "summer 2025",
-            "summer 2026",
-            "summer 2027",
-            "summer 2028",
-            "new grad",
-            "new graduate",
-        )
+        # "intern"/"internship" come only from _INTERN_WORD_RE. A plain
+        # substring would treat "international" as an internship.
         _INTERN_SENIORITY_BLOCK = (
             "senior",
             "sr.",
@@ -192,7 +201,9 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
             "vice president",
         )
         has_intern_word = bool(_INTERN_WORD_RE.search(posting.title or ""))
-        has_positive = has_intern_word or any(sig in title_lower for sig in _INTERN_POSITIVE)
+        has_positive = has_intern_word or any(
+            sig in title_lower for sig in _soft_internship_signals()
+        )
         # Seniority block only applies when we're relying on softer signals
         # (new grad, summer 202x) — not when "intern/internship" is explicit.
         # This preserves roles like "Summer VP Internship" (bank MBA programs).
@@ -217,9 +228,8 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
     # Sponsorship-hostile language when candidate needs sponsorship
     auth = profile.work_authorization
     if auth.sponsorship_required or auth.needs_visa_sponsorship:
-        for pattern in _SPONSORSHIP_HOSTILE_PATTERNS:
-            if re.search(pattern, haystack, re.IGNORECASE):
-                return FilterResult(False, f"sponsorship-hostile matched: {pattern}")
+        if sponsorship_signal(haystack) == "hostile":
+            return FilterResult(False, "sponsorship-hostile language in posting")
 
     # Location gate
     loc_result = _location_ok(posting.location, profile)

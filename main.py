@@ -106,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     webhook.add_argument("--host", default="0.0.0.0")
     webhook.add_argument("--port", type=int, default=8000)
+    doctor = sub.add_parser("doctor", help="Print a pipeline health report and exit")
+    doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     return parser
 
@@ -303,6 +305,286 @@ async def _cmd_list_apply(*, do_apply: bool) -> None:
         print(summary)
 
 
+OUTCOME_AWAITING_DAYS = 14
+
+
+def _unwrap(value: Any) -> Any:
+    """First element of a row tuple; scalars pass through."""
+    if isinstance(value, tuple):
+        return value[0] if value else None
+    return value
+
+
+async def _count_jobs(session: Any, *criteria: Any) -> int:
+    from sqlalchemy import func
+    from sqlmodel import select
+
+    from core.db import Job
+
+    statement = select(func.count()).select_from(Job).where(*criteria)
+    result = await session.exec(statement)
+    raw = _unwrap(result.one())
+    return int(raw or 0)
+
+
+async def _build_doctor_report() -> dict[str, Any]:
+    """Read-only pipeline health snapshot. No LLM calls."""
+    from datetime import UTC, datetime, timedelta
+
+    from sqlmodel import col, select
+
+    from config.settings import get_settings
+    from core.db import (
+        Job,
+        Outcome,
+        Status,
+        Tier,
+        get_recently_applied_companies,
+        init_db,
+        session_scope,
+    )
+
+    await init_db()
+    settings = get_settings()
+
+    async with session_scope() as session:
+        status_counts = {
+            status.value: await _count_jobs(session, col(Job.status) == status)
+            for status in Status
+        }
+        active = [
+            Status.staged,
+            Status.pending_review,
+            Status.submitted,
+            Status.manual_review,
+        ]
+        tier_counts = {
+            tier.value: await _count_jobs(
+                session,
+                col(Job.tier) == tier,
+                col(Job.status).in_(active),  # type: ignore[union-attr]
+            )
+            for tier in Tier
+        }
+
+        score_result = await session.exec(
+            select(Job.score).where(col(Job.score).is_not(None))  # type: ignore[union-attr]
+        )
+        scores: list[int] = []
+        for item in score_result.all():
+            value = _unwrap(item)
+            if isinstance(value, int):
+                scores.append(value)
+        score_stats: dict[str, Any] = {
+            "count": len(scores),
+            "avg": round(sum(scores) / len(scores), 1) if scores else None,
+            "min": min(scores) if scores else None,
+            "max": max(scores) if scores else None,
+        }
+
+        discovered_states = (
+            "discovered",
+            "staged",
+            "pending_review",
+            "submitted",
+            "manual_review",
+            "error",
+        )
+        staged_states = ("staged", "pending_review", "submitted", "manual_review")
+        total_discovered = sum(status_counts.get(name, 0) for name in discovered_states)
+        total_staged = sum(status_counts.get(name, 0) for name in staged_states)
+        total_submitted = status_counts.get("submitted", 0)
+
+        cooldown_companies = await get_recently_applied_companies(
+            session, cooldown_days=settings.company_cooldown_days
+        )
+
+        submitted_rows = await session.exec(
+            select(Job.tier, Job.outcome).where(col(Job.status) == Status.submitted)
+        )
+        outcome_counts = {item.value: 0 for item in Outcome}
+        outcome_counts["unlabeled"] = 0
+        positive = {
+            Outcome.screening.value,
+            Outcome.interview.value,
+            Outcome.offer.value,
+        }
+        by_tier: dict[str, dict[str, int]] = {
+            tier.value: {"labeled": 0, "positive": 0} for tier in Tier
+        }
+        for item in submitted_rows.all():
+            tier_value, outcome_value = item[0], item[1]
+            if isinstance(outcome_value, Outcome):
+                label: str | None = outcome_value.value
+            elif isinstance(outcome_value, str):
+                label = outcome_value
+            else:
+                label = None
+            if label in outcome_counts and label != "unlabeled":
+                outcome_counts[label] += 1
+                tier_name = tier_value.value if isinstance(tier_value, Tier) else tier_value
+                bucket = by_tier.get(tier_name) if isinstance(tier_name, str) else None
+                if bucket is not None:
+                    bucket["labeled"] += 1
+                    if label in positive:
+                        bucket["positive"] += 1
+            else:
+                outcome_counts["unlabeled"] += 1
+
+        awaiting_cutoff = datetime.now(UTC) - timedelta(days=OUTCOME_AWAITING_DAYS)
+        awaiting_label = await _count_jobs(
+            session,
+            col(Job.status) == Status.submitted,
+            col(Job.outcome).is_(None),
+            col(Job.decided_at).is_not(None),
+            col(Job.decided_at) < awaiting_cutoff,
+        )
+        outcome_by_tier = {
+            name: {
+                "labeled": counts["labeled"],
+                "positive": counts["positive"],
+                "positive_pct": (
+                    round(counts["positive"] / counts["labeled"] * 100, 1)
+                    if counts["labeled"]
+                    else 0.0
+                ),
+            }
+            for name, counts in by_tier.items()
+        }
+
+        error_result = await session.exec(
+            select(Job)
+            .where(
+                col(Job.status) == Status.error,
+                col(Job.last_error).is_not(None),  # type: ignore[union-attr]
+            )
+            .order_by(col(Job.updated_at).desc())
+            .limit(5)
+        )
+        recent_errors = [
+            {"id": job.id, "company": job.company, "error": job.last_error}
+            for job in error_result.all()
+        ]
+
+        vector_reject = await _count_jobs(session, col(Job.vector_decision) == "reject")
+        vector_pass = await _count_jobs(session, col(Job.vector_decision) == "pass")
+
+    discovered_pct = (
+        round(total_staged / total_discovered * 100, 1) if total_discovered else 0
+    )
+    submitted_pct = round(total_submitted / total_staged * 100, 1) if total_staged else 0
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "status_counts": status_counts,
+        "tier_counts": tier_counts,
+        "score_stats": score_stats,
+        "conversion": {
+            "discovered_to_staged_pct": discovered_pct,
+            "staged_to_submitted_pct": submitted_pct,
+        },
+        "active_cooldowns": sorted(cooldown_companies),
+        "cooldown_days": settings.company_cooldown_days,
+        "outcomes": outcome_counts,
+        "outcome_by_tier": outcome_by_tier,
+        "awaiting_label": awaiting_label,
+        "outcome_awaiting_days": OUTCOME_AWAITING_DAYS,
+        "vector_gate": {
+            "enabled": settings.vector_gate_enabled,
+            "threshold": settings.vector_threshold,
+            "reject": vector_reject,
+            "pass": vector_pass,
+        },
+        "recent_errors": recent_errors,
+    }
+
+
+def _print_doctor_report(report: dict[str, Any]) -> None:
+    """Human-readable health report. JSON mode prints the dict instead."""
+    counts: dict[str, int] = report["status_counts"]
+    width = max((len(name) for name in counts), default=12)
+    print("=== Job Agent Health Report ===")
+    print(f"Generated: {report['generated_at']}")
+    print()
+    print("--- Pipeline Funnel ---")
+    for name, count in counts.items():
+        print(f"  {name:<{width}}  {count}")
+
+    tiers: dict[str, int] = report["tier_counts"]
+    print()
+    print("--- Tier Distribution (active) ---")
+    print(
+        "  "
+        + "   ".join(
+            f"tier_{label}: {tiers.get(key, 0)}"
+            for key, label in (("one", "1"), ("two", "2"), ("three", "3"))
+        )
+    )
+
+    stats: dict[str, Any] = report["score_stats"]
+    avg = stats["avg"] if stats["avg"] is not None else "n/a"
+    low = stats["min"] if stats["min"] is not None else "n/a"
+    high = stats["max"] if stats["max"] is not None else "n/a"
+    print()
+    print("--- Score Distribution ---")
+    print(f"  count={stats['count']}  avg={avg}  min={low}  max={high}")
+
+    gate: dict[str, Any] = report["vector_gate"]
+    print()
+    print("--- Vector Gate ---")
+    print(
+        f"  enabled={gate['enabled']}  threshold={gate['threshold']}  "
+        f"pass={gate['pass']}  reject={gate['reject']}"
+    )
+
+    conversion: dict[str, float] = report["conversion"]
+    print()
+    print("--- Conversion Rates ---")
+    print(f"  discovered -> staged    {conversion['discovered_to_staged_pct']}%")
+    print(f"  staged -> submitted     {conversion['staged_to_submitted_pct']}%")
+
+    outcomes: dict[str, int] = report["outcomes"]
+    outcome_width = max((len(name) for name in outcomes), default=12)
+    print()
+    print("--- Outcomes (submitted) ---")
+    for name, count in outcomes.items():
+        print(f"  {name:<{outcome_width}}  {count}")
+    awaiting_days = report["outcome_awaiting_days"]
+    print(f"  awaiting_label ({awaiting_days}d+)  {report['awaiting_label']}")
+    print()
+    print("--- Outcomes by tier ---")
+    for name, bucket in report["outcome_by_tier"].items():
+        print(
+            f"  tier {name}: labeled={bucket['labeled']}  "
+            f"positive={bucket['positive']}  {bucket['positive_pct']}%"
+        )
+
+    cooldowns: list[str] = report["active_cooldowns"]
+    print()
+    print(f"--- Active Company Cooldowns ({report['cooldown_days']}-day) ---")
+    print(f"  {', '.join(cooldowns) if cooldowns else '(none)'}")
+
+    print()
+    print("--- Recent Errors ---")
+    errors: list[dict[str, Any]] = report["recent_errors"]
+    if not errors:
+        print("  (none)")
+        return
+    for item in errors:
+        message = (item.get("error") or "").replace("\n", " ")
+        print(f"  id={item.get('id')} {item.get('company')}: {message[:160]}")
+
+
+async def _cmd_doctor(json_output: bool = False) -> dict[str, Any]:
+    import json as _json
+
+    report = await _build_doctor_report()
+    if json_output:
+        print(_json.dumps(report, indent=2))
+    else:
+        _print_doctor_report(report)
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -347,6 +629,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "list-apply":
         asyncio.run(_cmd_list_apply(do_apply=args.apply))
+        return 0
+
+    if command == "doctor":
+        asyncio.run(_cmd_doctor(json_output=args.json))
         return 0
 
     async_commands: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {

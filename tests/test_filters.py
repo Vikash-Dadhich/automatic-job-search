@@ -170,6 +170,26 @@ def test_internship_only_off_by_default(profile: Profile) -> None:
     assert result.passed is True
 
 
+def test_internship_only_rejects_international_substring(
+    profile: Profile, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """'international' must not satisfy the intern word-boundary gate."""
+    monkeypatch.setenv("INTERNSHIP_ONLY", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    result = evaluate(
+        _posting(
+            title="Senior Product Manager, Growth - International",
+            external_id="intern-intl",
+        ),
+        profile,
+    )
+    assert result.passed is False
+    assert "internship signal" in (result.reason or "")
+    get_settings.cache_clear()
+
+
 # ── Sponsorship signal ──────────────────────────────────────────────────────
 
 def test_sponsorship_signal_hostile_no_sponsorship() -> None:
@@ -205,3 +225,10 @@ def test_sponsorship_signal_hostile_beats_friendly() -> None:
     assert sponsorship_signal(
         "We do not offer visa sponsorship. OPT students may apply but we cannot sponsor."
     ) == "hostile"
+    assert sponsorship_signal(
+        "OPT students may apply but we cannot sponsor."
+    ) == "hostile"
+
+
+def test_sponsorship_signal_sponsor_events_is_not_friendly() -> None:
+    assert sponsorship_signal("We sponsor employee events throughout the year.") == "unknown"

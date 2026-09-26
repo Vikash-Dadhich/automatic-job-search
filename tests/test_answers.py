@@ -159,6 +159,27 @@ async def test_resolver_banned_word_retry(profile) -> None:
     assert len(client.calls) == 2
 
 
+async def test_cover_letter_field_uses_stored_text(profile) -> None:
+    client = FakeAnswerClient()
+    job = Job(
+        source=Source.workday,
+        external_id="wd-letter",
+        title="Engineer",
+        company="Co",
+        url="https://co.wd1.myworkdayjobs.com/en-US/External/job/9",
+        cover_letter="Stored letter about the Engineer role at Co.",
+    )
+    resolver = AnswerResolver(profile, client=client)
+    stored = await resolver.resolve("Cover letter", job=job)
+    assert stored.source == AnswerSource.stored
+    assert stored.answer.startswith("Stored letter")
+    assert client.calls == []
+
+    essay = await resolver.resolve("Why are you interested in this role?", job=job)
+    assert essay.source == AnswerSource.llm
+    assert len(client.calls) == 1
+
+
 def test_answers_to_payload(profile) -> None:
     ans = resolve_deterministic("Email Address", profile)
     payload = answers_to_payload(

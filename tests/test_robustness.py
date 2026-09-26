@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -30,6 +31,8 @@ class ScoreOnlyClient:
         self.outreach_attempts = 0
 
     async def complete(self, *, user: str, **_kwargs: Any) -> str:
+        if "cover letter" in user.lower():
+            raise RuntimeError("503 UNAVAILABLE")
         if "outreach" in user.lower() or "Rewrite without" in user:
             self.outreach_attempts += 1
             raise RuntimeError("503 UNAVAILABLE")
@@ -147,7 +150,10 @@ async def test_outreach_failure_still_persists_tier_one_score(db_ready: None) ->
         job_id = job.id
 
     client = ScoreOnlyClient()
-    summary = await Scorer(client=client, profile=profile).score_pending()
+    summary = await Scorer(client=client, profile=profile).score_pending(
+        generate_outreach=True,
+        generate_cover_letter=False,
+    )
 
     assert client.outreach_attempts > 0, "outreach path must actually be exercised"
     assert summary.errors == 0
@@ -181,6 +187,8 @@ async def test_rewritten_jd_resets_staged_job_for_rescore(db_ready: None) -> Non
         job.status = Status.staged
         job.score = 88
         job.tier = Tier.one
+        job.cover_letter = "Letter written against the old posting."
+        job.outreach_draft = "Old outreach."
         session.add(job)
         job_id = job.id
 
@@ -205,6 +213,8 @@ async def test_rewritten_jd_resets_staged_job_for_rescore(db_ready: None) -> Non
         assert stored is not None
         assert stored.status is Status.discovered
         assert stored.score is None
+        assert stored.cover_letter is None
+        assert stored.outreach_draft is None
 
 
 @pytest.mark.asyncio
@@ -249,3 +259,59 @@ async def test_unchanged_jd_keeps_staged_status(db_ready: None) -> None:
         assert stored is not None
         assert stored.status is Status.staged
         assert stored.score == 77
+
+
+@pytest.mark.asyncio
+async def test_rewritten_jd_leaves_submitted_outcome_alone(db_ready: None) -> None:
+    decided = datetime(2026, 1, 1, tzinfo=UTC)
+    labeled = datetime(2026, 1, 2, tzinfo=UTC)
+    async with session_scope() as session:
+        job = await upsert_job(
+            session,
+            Job(
+                source=Source.linkedin,
+                external_id="submitted-1",
+                title="Product Manager",
+                company="GoodCo",
+                url="https://example.com/job/submitted",
+                description_clean="Original description.",
+                content_hash="hash-v1",
+                status=Status.discovered,
+            ),
+        )
+        job.status = Status.submitted
+        job.decided_at = decided
+        job.outcome = "interview"
+        job.outcome_at = labeled
+        job.outcome_message_id = 15
+        job.cover_letter = "Keep this letter."
+        session.add(job)
+        job_id = job.id
+
+    async with session_scope() as session:
+        await upsert_job(
+            session,
+            Job(
+                source=Source.linkedin,
+                external_id="submitted-1",
+                title="Product Manager",
+                company="GoodCo",
+                url="https://example.com/job/submitted",
+                description_clean="Employer rewrote the requirements.",
+                content_hash="hash-v2",
+                status=Status.discovered,
+            ),
+        )
+
+    async with session_scope() as session:
+        assert job_id is not None
+        stored = await get_job_by_id(session, job_id)
+        assert stored is not None
+        assert stored.status is Status.submitted
+        assert stored.outcome == "interview"
+        assert stored.outcome_at is not None
+        assert stored.outcome_at.replace(tzinfo=UTC) == labeled
+        assert stored.outcome_message_id == 15
+        assert stored.decided_at is not None
+        assert stored.decided_at.replace(tzinfo=UTC) == decided
+        assert stored.cover_letter == "Keep this letter."

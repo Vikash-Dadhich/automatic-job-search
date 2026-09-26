@@ -1,0 +1,30 @@
+---
+description: Token optimization — query the Graphify graph before reading the codebase
+alwaysApply: true
+---
+
+# Token optimization
+
+Use the local knowledge graph at `graphify-out/` before exploring code. A scoped query is a few thousand tokens; reading files, `graph.json`, `GRAPH_REPORT.md`, or the Obsidian vault is not.
+
+Run `graphify` from `~/.local/bin` (v0.9.68). If the command is missing, prefix `export PATH="$HOME/.local/bin:$PATH"`.
+
+Before Read, Grep, Glob, or a search Bash for a codebase question, run one of:
+
+- `graphify query "<question>"` — scoped subgraph
+- `graphify path "<A>" "<B>"` — how two symbols connect
+- `graphify explain "<symbol>"` — one node and its neighbors
+
+Pass the same instruction to every subagent that explores code.
+
+Read a file only after the graph names it and you need those lines to edit or debug, or when `graphify-out/graph.json` is missing.
+
+Do not load these into context:
+
+- `graphify-out/graph.json` and `graphify-out/cache/`
+- `graphify-out/GRAPH_REPORT.md`, except a short architecture pass when query, path, and explain are not enough
+- `graphify-out/obsidian/` — that vault is for the Obsidian app, not for the agent
+
+After you change code, run `graphify update .` (local AST, no API cost). Do not run `graphify extract` without `--code-only`, or `graphify label`, unless the user asks. Those send text to an LLM.
+
+Job-scoring payloads still go through `core/token_optimizer.py` (`minify_job`, `cache_block`). That path is separate from this graph.

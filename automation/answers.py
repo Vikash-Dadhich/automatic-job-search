@@ -31,6 +31,7 @@ Return ONLY the answer text (no quotes, no markdown, no preamble).
 
 class AnswerSource(StrEnum):
     deterministic = "deterministic"
+    stored = "stored"
     llm = "llm"
     blank = "blank"
     # Looks required but nothing could answer it — surface to the human.
@@ -351,6 +352,14 @@ class AnswerResolver:
                 question=question,
                 answer="",
                 source=self._unanswered_source(question),
+            )
+
+        stored = (job.cover_letter or "").strip() if job is not None else ""
+        if not force_llm and stored and _matches(question, "cover letter"):
+            return ResolvedAnswer(
+                question=question,
+                answer=stored,
+                source=AnswerSource.stored,
             )
 
         try:

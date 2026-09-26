@@ -57,3 +57,20 @@ def test_new_source_scored_without_error(profile: Profile) -> None:
     for src in (Source.google, Source.zip_recruiter):
         job = _job("Strategy Intern", source=src, job_id=10)
         assert prerank_score(job, profile) > 0
+
+
+def test_dream_company_boost(profile: Profile) -> None:
+    boosted = profile.model_copy(
+        update={
+            "preferences": profile.preferences.model_copy(
+                update={"dream_companies": ["Google"]}
+            )
+        }
+    )
+    dream = _job("Product Manager Intern", company="Google LLC", job_id=1)
+    other = _job("Product Manager Intern", company="Acme", job_id=2)
+    assert prerank_score(dream, boosted) == prerank_score(other, boosted) + 30
+
+
+def test_prerank_jobs_empty(profile: Profile) -> None:
+    assert prerank_jobs([], profile) == []

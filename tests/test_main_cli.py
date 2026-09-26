@@ -120,6 +120,19 @@ def test_prep_pack_cli() -> None:
     fake.assert_awaited_once()
 
 
+def test_doctor_cli() -> None:
+    fake = AsyncMock()
+    with (
+        patch("main.configure_logging"),
+        patch("main.get_settings") as gs,
+        patch("main._cmd_doctor", fake),
+    ):
+        gs.return_value = MagicMock(log_level="INFO")
+        rc = main_mod.main(["doctor"])
+    assert rc == 0
+    fake.assert_awaited_once()
+
+
 def test_default_command_is_serve() -> None:
     fake_serve = AsyncMock()
     with (

@@ -60,6 +60,7 @@ async def build_job_section(
         "score": job.score,
         "tier": tier,
         "outreach_draft": job.outreach_draft or "",
+        "cover_letter": job.cover_letter or "",
         "answers": [_answer_item(a) for a in answers],
         "manual_fill": list(MANUAL_FILL),
     }
@@ -108,6 +109,10 @@ def render_markdown(sections: list[dict[str, Any]], *, generated_at: str) -> str
         outreach = str(section.get("outreach_draft") or "").strip()
         if outreach:
             lines.extend(["### Outreach draft (Tier 1)", "", outreach, ""])
+
+        letter = str(section.get("cover_letter") or "").strip()
+        if letter:
+            lines.extend(["### Cover letter (Tier 1)", "", letter, ""])
 
         lines.extend(["### Fill yourself", ""])
         for reminder in section.get("manual_fill") or list(MANUAL_FILL):

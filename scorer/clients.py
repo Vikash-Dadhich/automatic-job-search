@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import structlog
@@ -19,6 +20,30 @@ import structlog
 from config.settings import get_settings
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass
+class TokenUsage:
+    """Accumulated provider usage for one client instance (one scoring run)."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    total_calls: int = 0
+
+    def __iadd__(self, other: TokenUsage) -> TokenUsage:
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.cached_tokens += other.cached_tokens
+        self.total_calls += other.total_calls
+        return self
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 _RETRY_DELAY_RE = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s", re.IGNORECASE)
 _TRANSIENT_MARKERS = (
@@ -174,6 +199,7 @@ class AnthropicClient:
     """Anthropic Messages API client with prompt-caching system blocks."""
 
     def __init__(self, api_key: str | None = None, *, client: Any | None = None) -> None:
+        self._usage = TokenUsage()
         if client is not None:
             self._client = client
             return
@@ -210,6 +236,7 @@ class AnthropicClient:
                 system=system_blocks,
                 messages=[{"role": "user", "content": user}],
             )
+            self._record_anthropic_usage(response)
             parts: list[str] = []
             for block in response.content:
                 text = getattr(block, "text", None)
@@ -224,6 +251,106 @@ class AnthropicClient:
             max_wait=settings.llm_retry_max_wait_s,
             label="anthropic",
         )
+
+    @property
+    def usage(self) -> TokenUsage:
+        return self._usage
+
+    def _record_anthropic_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self._usage.prompt_tokens += _as_int(getattr(usage, "input_tokens", 0))
+        self._usage.completion_tokens += _as_int(getattr(usage, "output_tokens", 0))
+        self._usage.cached_tokens += _as_int(getattr(usage, "cache_read_input_tokens", 0))
+        self._usage.total_calls += 1
+
+
+class OpenAIClient:
+    """OpenAI Chat Completions client. JSON scoring uses json_object mode."""
+
+    def __init__(self, api_key: str | None = None, *, client: Any | None = None) -> None:
+        self._usage = TokenUsage()
+        if client is not None:
+            self._client = client
+            return
+        settings = get_settings()
+        key = (api_key if api_key is not None else settings.openai_api_key) or ""
+        if not key.strip():
+            raise ValueError("OPENAI_API_KEY is empty. Set it in .env before live scoring.")
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=key.strip())
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        system_blocks: list[dict[str, Any]],
+        user: str,
+        max_tokens: int,
+        temperature: float,
+        json_mode: bool = False,
+        json_schema: dict[str, Any] | None = None,
+        thinking_level: str | None = None,
+    ) -> str:
+        del json_schema, thinking_level
+        settings = get_settings()
+        system = system_blocks_to_text(system_blocks)
+
+        async def _attempt(candidate: str) -> str:
+            kwargs: dict[str, Any] = {
+                "model": candidate,
+                "max_completion_tokens": max_tokens,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            }
+            # gpt-5 and o-series reject a custom temperature.
+            if not candidate.startswith(("gpt-5", "o1", "o3", "o4")):
+                kwargs["temperature"] = temperature
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            if candidate.startswith(("gpt-5", "o1", "o3", "o4")):
+                kwargs["reasoning_effort"] = "minimal"
+            response = await self._client.chat.completions.create(**kwargs)
+            self._record_openai_usage(response)
+            choice = response.choices[0]
+            text = (getattr(choice.message, "content", None) or "").strip()
+            if text:
+                return text
+            # Reasoning models can spend the whole budget and return no text.
+            kwargs["max_completion_tokens"] = min(max_tokens * 3, 8192)
+            response = await self._client.chat.completions.create(**kwargs)
+            self._record_openai_usage(response)
+            choice = response.choices[0]
+            text = (getattr(choice.message, "content", None) or "").strip()
+            if not text:
+                raise TruncatedCompletionError(f"empty response from {candidate}")
+            return text
+
+        return await call_with_resilience(
+            _attempt,
+            models=[model],
+            max_attempts=settings.llm_max_attempts,
+            max_wait=settings.llm_retry_max_wait_s,
+            label="openai",
+        )
+
+    @property
+    def usage(self) -> TokenUsage:
+        return self._usage
+
+    def _record_openai_usage(self, response: Any) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self._usage.prompt_tokens += _as_int(getattr(usage, "prompt_tokens", 0))
+        self._usage.completion_tokens += _as_int(getattr(usage, "completion_tokens", 0))
+        details = getattr(usage, "prompt_tokens_details", None)
+        self._usage.cached_tokens += _as_int(getattr(details, "cached_tokens", 0))
+        self._usage.total_calls += 1
 
 
 def system_blocks_to_text(system_blocks: list[dict[str, Any]]) -> str:
@@ -247,6 +374,7 @@ class GeminiClient:
     ) -> None:
         # Levels rejected by a model are remembered so we stop re-sending them.
         self._unsupported_levels: set[tuple[str, str]] = set()
+        self._usage = TokenUsage()
         if client is not None:
             self._client = client
             return
@@ -325,6 +453,7 @@ class GeminiClient:
                         contents=user,
                         config=config,
                     )
+                    self._record_gemini_usage(response)
                 except Exception as exc:
                     # An unsupported thinking level is permanent for this model: drop and retry.
                     if level and "thinking level" in str(exc).lower():
@@ -365,6 +494,19 @@ class GeminiClient:
             label="gemini",
         )
 
+    @property
+    def usage(self) -> TokenUsage:
+        return self._usage
+
+    def _record_gemini_usage(self, response: Any) -> None:
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return
+        self._usage.prompt_tokens += _as_int(getattr(meta, "prompt_token_count", 0))
+        self._usage.completion_tokens += _as_int(getattr(meta, "candidates_token_count", 0))
+        self._usage.cached_tokens += _as_int(getattr(meta, "cached_content_token_count", 0))
+        self._usage.total_calls += 1
+
 
 def _finish_reason(response: Any) -> str | None:
     candidates = getattr(response, "candidates", None) or []
@@ -385,10 +527,5 @@ def _lower_thinking(level: str | None) -> str | None:
 
 
 def build_llm_client() -> LLMClient:
-    """Factory: return GeminiClient or AnthropicClient from settings.llm_provider."""
-    provider = get_settings().llm_provider.strip().lower()
-    if provider == "gemini":
-        return GeminiClient()
-    if provider == "anthropic":
-        return AnthropicClient()
-    raise ValueError(f"Unknown LLM_PROVIDER={provider!r}. Use 'gemini' or 'anthropic'.")
+    """Scoring and writing always go through OpenAI."""
+    return OpenAIClient()

@@ -67,6 +67,13 @@ class FakeClient:
             self._failed = True
             raise RuntimeError("simulated API failure")
 
+        # Cover-letter prompts must be recognized before scoring and outreach.
+        if "Write a 3-5 sentence cover letter" in user:
+            return (
+                "I am applying for this role. "
+                "My recent work matches the posting. "
+                "One concrete result is already in my background."
+            )
         # Outreach prompts ask for a message; scoring asks to evaluate
         if "Write a 3-sentence outreach" in user or "Rewrite without" in user:
             idx = min(self._outreach_i, len(self.outreach_payloads) - 1)
@@ -259,6 +266,12 @@ async def test_score_pending_tiers_and_outreach(
         async def complete(self, **kwargs: Any) -> str:
             user = kwargs["user"]
             self.calls.append(kwargs)
+            if "Write a 3-5 sentence cover letter" in user:
+                return (
+                    "I am applying for the Senior Engineer role at GoodCo. "
+                    "My Python work matches the posting. "
+                    "One result from my background fits this team."
+                )
             if "Write a 3-sentence outreach" in user or "Rewrite without" in user:
                 return (
                     "I noticed the Senior Engineer role at GoodCo. "
@@ -276,6 +289,7 @@ async def test_score_pending_tiers_and_outreach(
         client=client,
         profile=profile,
         generate_outreach=True,
+        generate_cover_letter=True,
     )
     assert summary.scored == 3
     assert summary.staged == 2
@@ -300,6 +314,8 @@ async def test_score_pending_tiers_and_outreach(
         assert high.status == Status.staged
         assert high.outreach_draft is not None
         assert "GoodCo" in high.outreach_draft
+        assert high.cover_letter is not None
+        assert "GoodCo" in high.cover_letter
         assert high.scored_at is not None
 
         assert mid is not None
@@ -307,6 +323,7 @@ async def test_score_pending_tiers_and_outreach(
         assert mid.tier == Tier.two
         assert mid.status == Status.staged
         assert mid.outreach_draft is None
+        assert mid.cover_letter is None
 
         assert low is not None
         assert low.score == 40
@@ -422,3 +439,125 @@ def test_load_profile_for_scorer() -> None:
     # Sanity: scorer imports don't break profile load
     p = load_profile()
     assert p.identity.full_name
+
+
+async def test_score_pending_skips_cooldown_company(
+    db_ready: Path,
+    profile: Profile,
+) -> None:
+    from datetime import UTC, datetime
+
+    async with session_scope() as session:
+        session.add(
+            Job(
+                source=Source.linkedin,
+                external_id="cool-done",
+                title="Product Manager",
+                company="CoolCo",
+                location="Remote",
+                url="https://example.com/cool-done",
+                description_clean="Already applied.",
+                status=Status.submitted,
+                decided_at=datetime.now(UTC),
+            )
+        )
+        await upsert_job(
+            session,
+            Job(
+                source=Source.linkedin,
+                external_id="cool-new",
+                title="Product Manager",
+                company="CoolCo",
+                location="Remote",
+                url="https://example.com/cool-new",
+                description_clean="Python product role with 3 years experience.",
+                status=Status.discovered,
+            ),
+        )
+
+    client = FakeClient()
+    summary = await score_pending(
+        client=client,
+        profile=profile,
+        generate_outreach=False,
+    )
+    assert summary.filtered_out == 1
+    assert summary.staged == 0
+    assert client.calls == []
+
+    async with session_scope() as session:
+        from core.db import get_job_by_source_id
+
+        saved = await get_job_by_source_id(session, Source.linkedin, "cool-new")
+        assert saved is not None
+        assert saved.status == Status.filtered_out
+        assert saved.score == 0
+        assert saved.justification
+        assert "cooldown" in saved.justification[0].lower()
+
+
+async def test_score_pending_token_usage(
+    db_ready: Path,
+    profile: Profile,
+) -> None:
+    from scorer.clients import TokenUsage
+
+    async with session_scope() as session:
+        await upsert_job(
+            session,
+            Job(
+                source=Source.linkedin,
+                external_id="usage-none",
+                title="Product Manager",
+                company="PlainCo",
+                location="Remote",
+                url="https://example.com/usage-none",
+                description_clean="Python product role with 3 years experience.",
+                status=Status.discovered,
+            ),
+        )
+
+    bare = FakeClient()
+    bare_summary = await score_pending(
+        client=bare,
+        profile=profile,
+        generate_outreach=False,
+    )
+    assert bare_summary.token_usage is None
+
+    class UsageClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._usage = TokenUsage(prompt_tokens=120, completion_tokens=40, total_calls=1)
+
+        @property
+        def usage(self) -> TokenUsage:
+            return self._usage
+
+    async with session_scope() as session:
+        await upsert_job(
+            session,
+            Job(
+                source=Source.linkedin,
+                external_id="usage-yes",
+                title="Product Manager",
+                company="MeteredCo",
+                location="Remote",
+                url="https://example.com/usage-yes",
+                description_clean="Python product role with 3 years experience.",
+                status=Status.discovered,
+            ),
+        )
+
+    metered = UsageClient()
+    metered_summary = await score_pending(
+        client=metered,
+        profile=profile,
+        generate_outreach=False,
+    )
+    assert metered_summary.scored == 1
+    assert metered_summary.token_usage is metered.usage
+    assert metered_summary.token_usage is not None
+    assert metered_summary.token_usage.prompt_tokens == 120
+    assert metered_summary.token_usage.completion_tokens == 40
+    assert metered_summary.token_usage.total_calls == 1

@@ -37,12 +37,31 @@ search:
   hours_old: 36
   linkedin_fetch_description: true
 
-# Each entry needs a REAL careers or job deep-link URL.
-# tenant / shard / site cannot be guessed — they are parsed from the URL.
-# Example: https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite
-# TODO (manual): replace with real Workday careers URLs when ready to auto-apply.
+# Each URL was checked against that company's public Workday job API.
+# Starbucks, Nike, Amazon, and Microsoft do not publish a myworkdayjobs board,
+# so they stay on the LinkedIn/Indeed search above.
+# A saved browser session is still required before auto-fill for each company.
 workday_tenants:
-  - name: "PLACEHOLDER_COMPANY"
-    url: "https://placeholder.wd1.myworkdayjobs.com/External"
-    # Optional search text applied to this tenant (defaults to search.terms)
+  - name: "NVIDIA"
+    url: "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"
+    search_terms: []
+
+  - name: "Salesforce"
+    url: "https://salesforce.wd12.myworkdayjobs.com/Futureforce_Internships"
+    search_terms: []
+
+  - name: "Workday"
+    url: "https://workday.wd5.myworkdayjobs.com/Workday_Early_Career"
+    search_terms: []
+
+  - name: "Zillow"
+    url: "https://zillow.wd5.myworkdayjobs.com/Zillow_Group_External"
+    search_terms: []
+
+  - name: "Boeing"
+    url: "https://boeing.wd1.myworkdayjobs.com/EXTERNAL_CAREERS"
+    search_terms: []
+
+  - name: "Adobe"
+    url: "https://adobe.wd5.myworkdayjobs.com/external_experienced"
     search_terms: []

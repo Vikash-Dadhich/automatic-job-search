@@ -98,6 +98,7 @@ async def test_send_prep_pack_marks_jobs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PREP_PACKS_DIR", str(tmp_path / "prep_packs"))
+    monkeypatch.setenv("PREP_PACK_BRIEF", "false")
     from config.settings import get_settings
 
     get_settings.cache_clear()

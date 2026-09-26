@@ -78,3 +78,4 @@ class Evaluation(BaseModel):
     tier: Tier
     reasons: list[str] = Field(default_factory=list)
     outreach: str | None = None
+    cover_letter: str | None = None

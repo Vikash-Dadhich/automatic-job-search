@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar
 
-from sqlalchemy import JSON, Column, DateTime
+from sqlalchemy import JSON, Column, DateTime, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, SQLModel, UniqueConstraint, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -22,6 +22,15 @@ from config.settings import PROJECT_ROOT, get_settings
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """SQLite returns naive datetimes; attach UTC before any comparison."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _tz_datetime(*, nullable: bool = False, default_factory: Any = None) -> Any:
@@ -60,6 +69,44 @@ class Tier(StrEnum):
     one = "one"
     two = "two"
     three = "three"
+
+
+class Outcome(StrEnum):
+    """Post-submission result. Stored as VARCHAR, validated in Python."""
+
+    ghosted = "ghosted"
+    screening = "screening"
+    interview = "interview"
+    rejected = "rejected"
+    offer = "offer"
+
+
+# Nullable columns added after the original jobs table. init_db alters old
+# SQLite files and Neon in place; create_all does not.
+_JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
+    "sqlite": {
+        "cover_letter": "TEXT",
+        "outcome": "VARCHAR(32)",
+        "outcome_at": "DATETIME",
+        "outcome_message_id": "INTEGER",
+        "embedding": "TEXT",
+        "vector_score": "REAL",
+        "vector_profile_hash": "VARCHAR(64)",
+        "vector_decision": "VARCHAR(16)",
+        "embedding_model": "VARCHAR(64)",
+    },
+    "postgresql": {
+        "cover_letter": "TEXT",
+        "outcome": "VARCHAR(32)",
+        "outcome_at": "TIMESTAMP WITH TIME ZONE",
+        "outcome_message_id": "INTEGER",
+        "embedding": "JSON",
+        "vector_score": "DOUBLE PRECISION",
+        "vector_profile_hash": "VARCHAR(64)",
+        "vector_decision": "VARCHAR(16)",
+        "embedding_model": "VARCHAR(64)",
+    },
+}
 
 
 class SuggestionStatus(StrEnum):
@@ -107,7 +154,15 @@ class Job(SQLModel, table=True):
     tier: Tier | None = Field(default=None)
     justification: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     outreach_draft: str | None = Field(default=None)
+    cover_letter: str | None = Field(default=None)
     scored_at: datetime | None = _tz_datetime(nullable=True)
+    # JD embedding and the cosine it produced against one profile text.
+    # vector_decision is "pass" or "reject"; only rejects are reopened.
+    embedding: list[float] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    vector_score: float | None = Field(default=None)
+    vector_profile_hash: str | None = Field(default=None, max_length=64)
+    vector_decision: str | None = Field(default=None, max_length=16)
+    embedding_model: str | None = Field(default=None, max_length=64)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -120,10 +175,29 @@ class Job(SQLModel, table=True):
     review_message_id: int | None = Field(default=None)
     review_chat_id: str | None = Field(default=None, max_length=64)
     decided_at: datetime | None = _tz_datetime(nullable=True)
+    # Post-submit label. outcome_message_id: NULL = not sent, 0 = send in
+    # progress, positive = Telegram message id. Kept off decided_at so a
+    # label tap does not reset the company cooldown window.
+    outcome: str | None = Field(default=None, max_length=32)
+    outcome_at: datetime | None = _tz_datetime(nullable=True)
+    outcome_message_id: int | None = Field(default=None)
     last_error: str | None = Field(default=None)
     alerted_at: datetime | None = _tz_datetime(nullable=True)
     prep_pack_sent_at: datetime | None = _tz_datetime(nullable=True)
     created_at: datetime = _tz_datetime(default_factory=_utcnow)
+    updated_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
+class PlatformPacing(SQLModel, table=True):
+    """Gap between apply sessions for one platform. The runner uses ``workday``."""
+
+    __tablename__: ClassVar[str] = "platform_pacing"
+
+    platform: str = Field(primary_key=True, max_length=64)
+    multiplier: int = Field(default=1, ge=1)
+    clean_streak: int = Field(default=0, ge=0)
+    blocked_until: datetime | None = _tz_datetime(nullable=True)
+    next_eligible_at: datetime | None = _tz_datetime(nullable=True)
     updated_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
@@ -351,6 +425,48 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _ensure_job_columns(conn)
+
+
+def _dialect_name(conn: Any) -> str:
+    dialect = getattr(conn, "dialect", None)
+    name = getattr(dialect, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    sync = getattr(conn, "sync_connection", None)
+    if sync is not None:
+        return str(sync.dialect.name)
+    raise RuntimeError("cannot determine database dialect")
+
+
+async def _job_column_names(conn: Any) -> set[str]:
+    """Column names on jobs, or empty when the table does not exist yet."""
+    dialect = _dialect_name(conn)
+    if dialect == "sqlite":
+        rows = (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()
+        return {str(row[1]) for row in rows}
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'jobs' AND table_schema = current_schema()"
+            )
+        )
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+async def _ensure_job_columns(conn: Any) -> None:
+    """Add Phase 2 columns to an existing jobs table. No-op when already present."""
+    existing = await _job_column_names(conn)
+    if not existing:
+        return
+    dialect = _dialect_name(conn)
+    ddl = _JOB_COLUMN_DDL.get(dialect, _JOB_COLUMN_DDL["postgresql"])
+    for name, col_type in ddl.items():
+        if name in existing:
+            continue
+        await conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {col_type}"))
 
 
 # Scored-but-not-yet-acted-on states, safe to rewind when the JD text changes.
@@ -398,6 +514,12 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.tenant = job.tenant
     if job.posted_at is not None:
         existing.posted_at = job.posted_at
+    if content_changed:
+        existing.embedding = None
+        existing.vector_score = None
+        existing.vector_profile_hash = None
+        existing.vector_decision = None
+        existing.embedding_model = None
     if existing.status in {Status.discovered, Status.filtered_out}:
         existing.status = job.status
         if job.justification is not None:
@@ -411,6 +533,7 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.scored_at = None
         existing.justification = None
         existing.outreach_draft = None
+        existing.cover_letter = None
     existing.updated_at = now
     session.add(existing)
     await session.flush()
@@ -476,11 +599,14 @@ async def get_unsent_alerts(
     *,
     limit: int | None = None,
 ) -> list[Job]:
-    """manual_review / error jobs that have not yet been alerted on Telegram."""
+    """manual_review jobs that have not yet been alerted on Telegram.
+
+    Scoring failures stay in the database and are not sent as per-job alerts.
+    """
     statement = (
         select(Job)
         .where(
-            col(Job.status).in_([Status.manual_review, Status.error]),  # type: ignore[union-attr]
+            col(Job.status) == Status.manual_review,
             col(Job.alerted_at).is_(None),  # type: ignore[union-attr]
         )
         .order_by(col(Job.id))
@@ -512,6 +638,97 @@ async def get_unsent_prep_pack_jobs(
         statement = statement.limit(limit)
     result = await session.exec(statement)
     return list(result.all())
+
+
+def _company_name(row: Any) -> str | None:
+    """Unwrap a single-column select row into a company string."""
+    value = row[0] if isinstance(row, tuple) else row
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+async def claim_outcome_prompt(session: AsyncSession, job_id: int) -> bool:
+    """Mark a submitted job as 'send in progress'. True only for the winner."""
+    statement = (
+        update(Job)
+        .where(col(Job.id) == job_id)
+        .where(col(Job.status) == Status.submitted)
+        .where(col(Job.outcome_message_id).is_(None))
+        .values(outcome_message_id=0)
+    )
+    result = await session.exec(statement)  # type: ignore[call-overload]
+    return int(result.rowcount or 0) > 0
+
+
+async def release_outcome_prompt(session: AsyncSession, job_id: int) -> None:
+    """Clear an in-progress send so the next run can retry."""
+    statement = (
+        update(Job)
+        .where(col(Job.id) == job_id)
+        .where(col(Job.outcome_message_id) == 0)
+        .values(outcome_message_id=None)
+    )
+    await session.exec(statement)  # type: ignore[call-overload]
+
+
+async def finish_outcome_prompt(
+    session: AsyncSession,
+    job_id: int,
+    message_id: int,
+) -> bool:
+    """Store the Telegram message id. Only replaces the in-progress sentinel."""
+    if message_id <= 0:
+        return False
+    statement = (
+        update(Job)
+        .where(col(Job.id) == job_id)
+        .where(col(Job.outcome_message_id) == 0)
+        .values(outcome_message_id=message_id)
+    )
+    result = await session.exec(statement)  # type: ignore[call-overload]
+    return int(result.rowcount or 0) > 0
+
+
+async def get_jobs_needing_outcome_prompt(
+    session: AsyncSession,
+    limit: int | None = None,
+) -> list[Job]:
+    """Submitted jobs that have not been sent an outcome keyboard."""
+    statement = (
+        select(Job)
+        .where(col(Job.status) == Status.submitted)
+        .where(col(Job.outcome_message_id).is_(None))
+        .order_by(col(Job.id))
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def get_recently_applied_companies(
+    session: AsyncSession,
+    *,
+    cooldown_days: int = 30,
+) -> set[str]:
+    """Companies we submitted to within the cooldown window.
+
+    Statuses included: submitted, pending_review, manual_review.
+    ``ignored`` is excluded — the human rejected the job, so the company
+    slot should stay open for future roles. Rows without ``decided_at``
+    are excluded so an in-flight card does not block the company forever.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=cooldown_days)
+    statement = select(Job.company).where(
+        col(Job.status).in_(  # type: ignore[union-attr]
+            [Status.submitted, Status.pending_review, Status.manual_review]
+        ),
+        col(Job.decided_at) >= cutoff,  # type: ignore[operator]
+        col(Job.decided_at).is_not(None),  # type: ignore[union-attr]
+    )
+    result = await session.exec(statement)
+    return {name for row in result.all() if (name := _company_name(row))}
 
 
 async def get_jobs_for_role(

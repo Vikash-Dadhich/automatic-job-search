@@ -7,6 +7,12 @@ from typing import Any
 
 import structlog
 
+from bot.outcomes import (
+    build_outcome_keyboard,
+    outcome_label,
+    outcome_message_text,
+    send_outcome_prompt,
+)
 from bot.submit import Submitter, WorkdaySubmitter
 from bot.suggest import decide_suggestion
 from bot.telegram import (
@@ -14,7 +20,9 @@ from bot.telegram import (
     SuggestAction,
     TelegramClient,
     decode_callback,
+    decode_outcome_callback,
     decode_suggest_callback,
+    is_outcome_callback,
     is_suggest_callback,
 )
 from core.db import Job, Status, get_job_by_id, init_db, session_scope
@@ -173,6 +181,91 @@ async def handle_message(
         log.warning("handle_message_failed", error=str(exc))
 
 
+async def _handle_outcome_callback(
+    cq: dict[str, Any],
+    *,
+    client: TelegramClient,
+) -> Status | None:
+    """Record a post-submit label. Does not change status or decided_at."""
+    callback_id = str(cq.get("id") or "")
+    data = str(cq.get("data") or "")
+    message = cq.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    try:
+        outcome, job_id = decode_outcome_callback(data)
+    except ValueError as exc:
+        log.warning("outcome_callback_decode_failed", data=data, error=str(exc))
+        await _safe_answer(client, callback_id, text="Invalid outcome button", show_alert=True)
+        return None
+
+    async with session_scope() as session:
+        job = await get_job_by_id(session, job_id)
+
+    if job is None:
+        await _safe_answer(client, callback_id, text="Job not found", show_alert=True)
+        return None
+    if job.status != Status.submitted:
+        await _safe_answer(client, callback_id, text=f"Not submitted ({job.status.value})")
+        return job.status
+
+    label = outcome_label(outcome)
+    if job.outcome == outcome.value:
+        await _safe_answer(client, callback_id, text=f"Already {label}")
+        return job.status
+
+    now = datetime.now(UTC)
+    message_id: int | None = None
+    async with session_scope() as session:
+        target = await get_job_by_id(session, job_id)
+        if target is None:
+            return None
+        if target.status != Status.submitted:
+            await _safe_answer(
+                client, callback_id, text=f"Not submitted ({target.status.value})"
+            )
+            return target.status
+        if target.outcome == outcome.value:
+            await _safe_answer(client, callback_id, text=f"Already {label}")
+            return target.status
+        target.outcome = outcome.value
+        target.outcome_at = now
+        target.updated_at = now
+        message_id = target.outcome_message_id
+        session.add(target)
+        # Snapshot fields used after the session closes.
+        title = target.title
+        company = target.company
+
+    if message_id is not None and message_id > 0:
+        edit_chat = chat_id if chat_id is not None else client.chat_id
+        if edit_chat is not None:
+            preview = Job(
+                source=job.source,
+                external_id=job.external_id,
+                title=title,
+                company=company,
+                url=job.url,
+            )
+            try:
+                await client.edit_message_text(
+                    chat_id=edit_chat,
+                    message_id=message_id,
+                    text=outcome_message_text(preview, outcome),
+                    reply_markup=build_outcome_keyboard(job_id),
+                )
+            except Exception as exc:
+                log.warning(
+                    "outcome_edit_failed",
+                    job_id=job_id,
+                    error=str(exc)[:200],
+                )
+
+    await _safe_answer(client, callback_id, text=f"Saved: {label}")
+    log.info("outcome_labeled", job_id=job_id, outcome=outcome.value)
+    return Status.submitted
+
+
 async def handle_callback(
     update: dict[str, Any],
     *,
@@ -202,6 +295,9 @@ async def handle_callback(
 
         if is_suggest_callback(data):
             return await _handle_suggest_callback(cq, client=client)
+
+        if is_outcome_callback(data):
+            return await _handle_outcome_callback(cq, client=client)
 
         try:
             action, job_id = decode_callback(data)
@@ -328,6 +424,9 @@ async def handle_callback(
                         job_id=job_id,
                         error=str(photo_exc),
                     )
+
+        if new_status == Status.submitted:
+            await send_outcome_prompt(job_id, client)
 
         await _safe_answer(client, callback_id, text=decision_label)
 

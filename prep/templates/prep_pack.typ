@@ -62,6 +62,13 @@
       #v(0.35em)
     ]
 
+    #if "cover_letter" in job.keys() and job.cover_letter != "" [
+      #text(weight: "bold", size: 10.5pt)[Cover letter (Tier 1)]
+      #v(0.15em)
+      #job.cover_letter
+      #v(0.35em)
+    ]
+
     #text(weight: "bold", size: 10.5pt)[Fill yourself]
     #v(0.15em)
     #if "manual_fill" in job.keys() [

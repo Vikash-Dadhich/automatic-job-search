@@ -171,7 +171,13 @@ def test_render_markdown_includes_jobs_and_manual() -> None:
     assert "PM @ Co" in md
     assert "a@b.com" in md
     assert "Hello" in md
+    assert "Cover letter" not in md
     assert MANUAL_FILL[0] in md
+
+    sections[0]["cover_letter"] = "A short letter for Co."
+    with_letter = render_markdown(sections, generated_at="2026-01-01")
+    assert "### Cover letter (Tier 1)" in with_letter
+    assert "A short letter for Co." in with_letter
 
 
 def test_compile_prep_pdf(tmp_path: Path) -> None:

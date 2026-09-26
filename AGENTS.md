@@ -33,7 +33,7 @@ Update this table and the one in `README.md` as steps complete.
 
 ## Confirmed product decisions
 
-- LLM provider: switchable via `LLM_PROVIDER` (`gemini` default, `anthropic` fallback). Cheap model (`active_scorer_model`) for scoring; stronger (`active_writer_model`) for outreach/open-ended answers.
+- LLM provider: OpenAI only (`OPENAI_API_KEY`, `gpt-5-mini` for scoring and writing). Embeddings use the same key (`text-embedding-3-small`).
 - Resume: default is the candidate's `config/base_resume.pdf` (copied per job + sanitized). Typst tailoring is on-demand via `main.py tailor-resume <job_id>` / `compile_for_job`.
 - Automation posture: Workday = auto-fill + 1-tap submit (via Telegram). LinkedIn/Indeed Easy Apply = discovery + scoring + resume + prep pack (manual). LinkedIn/Indeed jobs whose `job_url_direct` is a company Workday page are auto-fill eligible like native Workday.
 - Hosting: "run from anywhere" -> a cloud/VPS host is the target (Step 7); the automated browser will run there behind noVNC so takeover works from any device. Not local-machine-bound.
@@ -47,7 +47,7 @@ Update this table and the one in `README.md` as steps complete.
 - Data models: Pydantic v2 (`pydantic`, `pydantic-settings`).
 - DB: SQLModel + SQLAlchemy async — SQLite (`aiosqlite`) for local/tests; Neon Postgres (`asyncpg`) for cron/production via `DATABASE_URL`.
 - HTTP: `httpx` (async) + `tenacity` retries. Scraping: `python-jobspy`, HTML clean via `selectolax`.
-- LLM: `google-genai` (Gemini, default) and `anthropic` (optional fallback), selected by `build_llm_client()`.
+- LLM: OpenAI (`openai`) for scoring, writing, and embeddings via `build_llm_client()` / `build_embedder()`.
 - Resume: `typst` (PyPI binding, no system binary) + `pikepdf` for metadata.
 - Logging: `structlog`.
 - Lint/format: `ruff`. Types: `pyright`. Tests: `pytest` + `pytest-asyncio` (asyncio_mode=auto).
@@ -142,7 +142,7 @@ automation/       # Step 5: Playwright Workday pre-fill (never submit)
 bot/              # Step 6: Telegram review + 1-tap submit
   telegram.py     # TelegramClient + encode/decode_callback (+ tenacity retry) + send_document
   review.py       # send_pending_reviews (screenshot + keyboard)
-  alerts.py       # send_pending_alerts (manual_review / error -> Telegram)
+  alerts.py       # send_pending_alerts (manual_review -> Telegram; scoring errors stay in the DB)
   prep.py         # send_prep_pack (LinkedIn/Indeed Markdown+PDF via Telegram)
   submit.py       # WorkdaySubmitter (ONLY place that clicks Submit)
   handlers.py     # Approve / Manual / Discard callback dispatch
@@ -160,7 +160,7 @@ storage/
 tests/            # pytest suite (offline; mock LLM client; temp DB)
 ```
 
-Runtime model (Step 7): one async process — `AsyncIOScheduler` fires `run_pipeline()` at each `SCHEDULE_TIMES` entry (timezone-aware); a concurrent `run_polling()` task handles Telegram taps. Per-stage try/except isolation: one failure never aborts later stages. Pipeline stages: ingest → score → resume → **prep** → apply → reviews → alerts. `ENABLE_APPLY` / `ENABLE_REVIEWS` / `ENABLE_PREP_PACK` toggles skip Workday/Telegram/prep stages when sessions or tokens are not ready. Prep packs require `ENABLE_REVIEWS` (Telegram delivery). noVNC browser takeover is an optional follow-up (not in-tree).
+Runtime model (Step 7): one async process — `AsyncIOScheduler` fires `run_pipeline()` at each `SCHEDULE_TIMES` entry (timezone-aware); a concurrent `run_polling()` task handles Telegram taps. Per-stage try/except isolation: one failure never aborts later stages. Pipeline stages: ingest → score → resume → **prep** → apply → reviews → alerts. `ENABLE_APPLY` / `ENABLE_REVIEWS` / `ENABLE_PREP_PACK` toggles skip Workday/Telegram/prep stages when sessions or tokens are not ready. Prep packs require `ENABLE_REVIEWS` (Telegram delivery). Brief mode sends one shortlist text file per run: every score above 75, then scores of at least 60 until the file has 20. Scores under 60 are left off. `SCORE_BUDGET` unset means every job that passes filters and the embedding gate is scored. noVNC browser takeover is an optional follow-up (not in-tree).
 
 Types: `uv run pyright` must report 0 errors (same bar as ruff/pytest).
 ## Data model (core/db.py)
@@ -169,12 +169,15 @@ Types: `uv run pyright` must report 0 errors (same bar as ruff/pytest).
 
 - Identity/dedup: `source`, `external_id`, `tenant`, `content_hash`.
 - Posting: `title`, `company`, `location`, `url`, `description_clean`, `posted_at`, `discovered_at`.
-- Scoring: `score` (0-100), `tier`, `justification` (list[str]), `outreach_draft`, `scored_at`.
-- Workflow: `status`, `resume_path`, `screenshot_path`, `application_answers` (dict JSON), `review_message_id`, `review_chat_id`, `decided_at`, `last_error`, `alerted_at`, `prep_pack_sent_at`, `created_at`, `updated_at`.
+- Scoring: `score` (0-100), `tier`, `justification` (list[str]), `outreach_draft`, `cover_letter`, `scored_at`, `embedding` (JD vector), `vector_score`, `vector_profile_hash`, `vector_decision` (`pass` or `reject`). A changed `content_hash` clears the four vector fields.
+- Workflow: `status`, `resume_path`, `screenshot_path`, `application_answers` (dict JSON), `review_message_id`, `review_chat_id`, `decided_at`, `outcome`, `outcome_at`, `outcome_message_id`, `last_error`, `alerted_at`, `prep_pack_sent_at`, `created_at`, `updated_at`.
+
+`PlatformPacing` table, primary key `platform` (the apply runner uses `workday`): `multiplier`, `clean_streak`, `blocked_until`, `next_eligible_at`, `updated_at`. Compare those timestamps with `_as_utc`; SQLite returns them naive.
 
 Enums:
 - `Source`: linkedin | indeed | workday
 - `Tier`: one | two | three
+- `Outcome`: ghosted | screening | interview | rejected | offer (nullable; not a status)
 - `Status`: discovered | filtered_out | scored | staged | pending_review | submitted | manual_review | ignored | error
 
 ### Status lifecycle
@@ -187,7 +190,8 @@ staged LinkedIn/Indeed --(send_prep_pack)--> Telegram Markdown+PDF (prep_pack_se
 staged --(Step 5 Workday pre-fill)--> pending_review (+ screenshot_path, application_answers)
   |-- BlockerError --> manual_review (+ screenshot_path)
 pending_review --(send_pending_reviews)--> review card on Telegram (review_message_id set)
-manual_review|error --(send_pending_alerts)--> Telegram alert (alerted_at set; screenshot if present)
+manual_review --(send_pending_alerts)--> Telegram alert (alerted_at set; screenshot if present)
+error (scoring failure) stays in the database and is not alerted
 pending_review --(Telegram Approve)--> submitted | manual_review (if submit blocked)
 pending_review --(Telegram Manual)--> manual_review
 pending_review --(Telegram Discard)--> ignored
@@ -227,8 +231,8 @@ Provider clients live in `scorer/clients.py`; `scorer/engine.py` re-exports
 - Outreach is isolated: a failed Tier-1 draft is logged and the score still persists. Previously any outreach exception pushed a valid Tier-1 job to `Status.error`.
 - Pre-filter hard negatives (ingest + scoring backlog guard): company/keyword/clearance/staffing/location, plus seniority titles (`ENABLE_SENIORITY_FILTER` + `SENIORITY_TITLE_KEYWORDS`) and sponsorship-hostile language. The YOE gate is profile-aware: the ceiling is the candidate's own experience (`Profile.total_years_experience()`) plus `YEARS_EXPERIENCE_SLACK`, overridable via `MAX_REQUIRED_YEARS_EXPERIENCE`. A JD is dropped only when its *lowest* stated requirement is out of reach, so "3+ required / 10+ preferred" survives.
 - Tier mapping: Tier 1 = score>=`TIER_ONE_MIN_SCORE` OR company in `preferences.dream_companies` -> `staged` + outreach draft. Tier 2 = >=`TIER_TWO_MIN_SCORE` -> `staged`. Tier 3 -> `filtered_out`. Dream-company matching normalizes legal suffixes, so "Google" matches "Google LLC".
-- `build_llm_client()` returns `GeminiClient` or `AnthropicClient` from `settings.llm_provider`. Each client raises if its API key is empty. Tests inject a `FakeClient` implementing the `LLMClient` protocol (no network).
-- Model ids: Gemini uses `gemini_scorer_model` / `gemini_writer_model`; Anthropic uses `scorer_model` / `writer_model`. Callers use `settings.active_scorer_model` / `settings.active_writer_model`.
+- `build_llm_client()` always returns `OpenAIClient`. It raises if `OPENAI_API_KEY` is empty. Tests inject a `FakeClient` implementing the `LLMClient` protocol (no network).
+- Model ids: `openai_scorer_model` / `openai_writer_model`. Callers use `settings.active_scorer_model` / `settings.active_writer_model`, which always resolve to those.
 - Anti-AI style gate: `BANNED_WORDS` (delve, tapestry, beacon, testament, "thrilled to apply", etc.). Outreach retries once, then strips offending sentences.
 
 ## Coding conventions
@@ -259,7 +263,7 @@ Provider clients live in `scorer/clients.py`; `scorer/engine.py` re-exports
 - Fill `config/profile.yaml` with real candidate facts (replace all `PLACEHOLDER_*`).
 - Save your resume PDF as `config/base_resume.pdf` (used by default for applications).
 - Fill `config/targets.yaml`: real search terms + at least one real Workday careers URL (placeholder tenants are auto-skipped).
-- Put `GEMINI_API_KEY` in `.env` (default). Optional: set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` instead.
+- Put `OPENAI_API_KEY` in `.env`. Scoring uses OpenAI (`gpt-5-mini`).
 - Step 5 manual: `uv run playwright install chromium`; fill real Workday URLs in `targets.yaml`; run `save_session` once per tenant.
 - Step 6 manual: create a bot with @BotFather; set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env`.
 - Step 7 manual: confirm `SCHEDULE_TIMES` / `TIMEZONE`; run `save_session` on the host before Docker; `docker compose up -d` on a VPS.

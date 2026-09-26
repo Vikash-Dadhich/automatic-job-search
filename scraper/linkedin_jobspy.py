@@ -136,13 +136,25 @@ def _dataframe_to_postings(
     return out
 
 
-def _google_search_term(search: SearchConfig, term: str) -> str:
+def _google_search_term(_search: SearchConfig, term: str) -> str:
     """Google Jobs needs a natural-language query; bare keywords return little.
 
-    'since yesterday' is how Google encodes recency (the scraper has no
-    hours_old for google), which pairs with our 36h window + upsert dedupe.
+    Location is passed separately via ``scrape_jobs(location=...)``. Embedding
+    a country like "United States" in the query is rejected by Google Jobs.
     """
-    return f"{term} jobs near {search.location} since yesterday"
+    return f"{term} internship"
+
+
+def _effective_windows(search: SearchConfig) -> dict[str, str]:
+    """How each site actually applies ``hours_old`` (JobSpy does not honor it uniformly)."""
+    configured = f"{search.hours_old}h"
+    notes = {
+        "linkedin": configured,
+        "indeed": configured,
+        "google": "hours_old ignored (no recency clause in the Google query)",
+        "zip_recruiter": "hours_old rounded up to the next full day",
+    }
+    return {site: notes.get(site, configured) for site in search.sites}
 
 
 def _scrape_term(search: SearchConfig, term: str) -> Any:
@@ -162,7 +174,16 @@ def _scrape_term(search: SearchConfig, term: str) -> Any:
     )
     if "google" in search.sites:
         kwargs["google_search_term"] = _google_search_term(search, term)
-    return scrape_jobs(**kwargs)
+    try:
+        return scrape_jobs(**kwargs)
+    except TypeError as exc:
+        # Older JobSpy builds reject google_search_term. Retrying without it
+        # keeps LinkedIn/Indeed/ZipRecruiter results for this term.
+        if "google_search_term" not in kwargs or "google_search_term" not in str(exc):
+            raise
+        log.warning("jobspy_google_search_term_unsupported", error=str(exc))
+        kwargs.pop("google_search_term", None)
+        return scrape_jobs(**kwargs)
 
 
 async def fetch_linkedin_indeed(
@@ -174,6 +195,12 @@ async def fetch_linkedin_indeed(
     search = targets.search
     all_postings: list[RawPosting] = []
     seen: set[tuple[str, str]] = set()
+
+    log.warning(
+        "jobspy_recency_windows",
+        configured_hours_old=search.hours_old,
+        effective=_effective_windows(search),
+    )
 
     for term in search.terms:
         log.info("jobspy_scrape_start", term=term, sites=search.sites)

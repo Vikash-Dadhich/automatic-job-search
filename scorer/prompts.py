@@ -45,6 +45,15 @@ Tone: human, specific, professional. No hype. Avoid banned AI buzzwords.
 Return ONLY the message text (no subject line, no quotes, no markdown).
 """
 
+COVER_LETTER_SYSTEM = """\
+You draft a 3-5 sentence cover letter for one job application.
+Ground every claim in the provided candidate facts — invent nothing.
+Explain why this company, why this role, and one concrete past result
+that already appears in the facts.
+Tone: human, specific, professional. No hype. Avoid banned AI buzzwords.
+Return ONLY the letter text (no subject line, no quotes, no markdown).
+"""
+
 
 def build_scoring_system_blocks(profile: Profile) -> list[dict[str, Any]]:
     """Static system content: candidate facts + rubric (prompt-cache friendly)."""
@@ -70,4 +79,16 @@ def build_outreach_user(job: Job, profile: Profile) -> str:
         f"Target role: {job.title} at {job.company}\n"
         f"Location: {job.location or 'N/A'}\n"
         f"Write a 3-sentence outreach asking for a referral or brief chat."
+    )
+
+
+def build_cover_letter_user(job: Job, profile: Profile) -> str:
+    """User prompt for a Tier-1 cover letter. Phrase is matched by test fakes."""
+    name = profile.identity.full_name
+    return (
+        f"Candidate: {name}\n"
+        f"Facts:\n{profile.static_context_block()}\n\n"
+        f"Target role: {job.title} at {job.company}\n"
+        f"Location: {job.location or 'N/A'}\n"
+        "Write a 3-5 sentence cover letter for this application."
     )

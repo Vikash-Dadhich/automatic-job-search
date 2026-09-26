@@ -76,15 +76,15 @@ async def test_send_pending_alerts_photo_and_skip(
     assert len(transport.calls) == 1
 
 
-async def test_send_pending_alerts_text_for_error(db_ready: Path) -> None:
+async def test_scoring_error_does_not_alert(db_ready: Path) -> None:
     job = Job(
-        source=Source.workday,
-        external_id="wd-err-alert",
+        source=Source.indeed,
+        external_id="err-empty",
         title="Backend",
         company="Co",
-        url="https://co.wd1.myworkdayjobs.com/en-US/External/job/2",
+        url="https://example.com/err",
         status=Status.error,
-        last_error="boom",
+        last_error="Empty model response",
         screenshot_path=None,
     )
     async with session_scope() as session:
@@ -94,15 +94,15 @@ async def test_send_pending_alerts_text_for_error(db_ready: Path) -> None:
     client = TelegramClient(transport=transport, chat_id="1")
     summary = await send_pending_alerts(client)
 
-    assert summary.sent == 1
-    assert transport.calls[0]["method"] == "sendMessage"
-    assert "ALERT [ERROR]" in transport.calls[0]["payload"]["text"]
+    assert summary.sent == 0
+    assert transport.calls == []
 
     async with session_scope() as session:
         assert job.id is not None
         refreshed = await get_job_by_id(session, job.id)
         assert refreshed is not None
-        assert refreshed.alerted_at is not None
+        assert refreshed.alerted_at is None
+        assert refreshed.status == Status.error
 
 
 async def test_send_pending_alerts_empty(db_ready: Path) -> None:
