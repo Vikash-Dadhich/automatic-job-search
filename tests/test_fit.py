@@ -14,6 +14,9 @@ from scorer.fit import (
     build_fit_system_blocks,
     build_fit_user,
     evaluate_fit,
+    fit_context_block,
+    fit_is_current,
+    profile_fit_hash,
 )
 
 _LONG = (
@@ -79,13 +82,110 @@ def _job(profile_text: str = _LONG, **kwargs: object) -> Job:
     return Job(**data)  # type: ignore[arg-type]
 
 
+def test_fit_context_keeps_match_facts_and_drops_contact_details(profile: Profile) -> None:
+    block = fit_context_block(profile)
+    assert profile.education[0].degree in block
+    assert profile.education[0].school in block
+    assert profile.experience[0].title in block
+    assert profile.experience[0].company in block
+    assert profile.skills[0] in block
+    assert profile.identity.location in block
+    assert "remote_ok=" in block
+    assert profile.identity.email not in block
+    assert profile.identity.phone not in block
+    assert profile.identity.linkedin_url not in block
+    assert profile.identity.github_url not in block
+    assert "sponsorship" not in block.lower()
+    assert "f-1" not in block.lower()
+    assert "dream" not in block.lower()
+
+
+def test_fit_hash_tracks_match_facts_only(profile: Profile) -> None:
+    original = profile_fit_hash(profile)
+    with_skill = profile.model_copy(update={"skills": [*profile.skills, "Origami"]})
+    bullet = profile.experience[0].model_copy(
+        update={"bullets": [*profile.experience[0].bullets, "Added a delivery bullet."]}
+    )
+    with_bullet = profile.model_copy(
+        update={"experience": [bullet, *profile.experience[1:]]}
+    )
+    school = profile.education[0].model_copy(update={"graduation_date": "2029-06"})
+    with_school = profile.model_copy(update={"education": [school, *profile.education[1:]]})
+    moved = profile.model_copy(
+        update={
+            "preferences": profile.preferences.model_copy(update={"remote_ok": False}),
+            "identity": profile.identity.model_copy(update={"location": "Austin, TX"}),
+        }
+    )
+    assert profile_fit_hash(with_skill) != original
+    assert profile_fit_hash(with_bullet) != original
+    assert profile_fit_hash(with_school) != original
+    assert profile_fit_hash(moved) != original
+
+    same = original
+    for updated in (
+        profile.model_copy(
+            update={"identity": profile.identity.model_copy(update={"email": "other@example.com"})}
+        ),
+        profile.model_copy(
+            update={"identity": profile.identity.model_copy(update={"phone": "+1-555-0100"})}
+        ),
+        profile.model_copy(
+            update={
+                "identity": profile.identity.model_copy(
+                    update={"linkedin_url": "https://www.linkedin.com/in/someone-else"}
+                )
+            }
+        ),
+        profile.model_copy(
+            update={
+                "identity": profile.identity.model_copy(
+                    update={"github_url": "https://github.com/someone-else"}
+                )
+            }
+        ),
+        profile.model_copy(
+            update={"identity": profile.identity.model_copy(update={"full_name": "Other Name"})}
+        ),
+        profile.model_copy(
+            update={
+                "work_authorization": profile.work_authorization.model_copy(
+                    update={"sponsorship_required": False, "needs_visa_sponsorship": False}
+                )
+            }
+        ),
+        profile.model_copy(
+            update={
+                "preferences": profile.preferences.model_copy(
+                    update={"dream_companies": ["Acme Dream Co"]}
+                )
+            }
+        ),
+    ):
+        assert profile_fit_hash(updated) == same
+
+
+def test_phase6_v1_fit_is_stale(profile: Profile) -> None:
+    job = _job()
+    job.score = 80
+    job.fit_confidence = "high"
+    job.fit_content_hash = job.content_hash
+    job.fit_profile_hash = profile_fit_hash(profile)
+    job.fit_version = "phase6-v1"
+    assert FIT_VERSION == "phase6-v2"
+    assert fit_is_current(job, profile) is False
+    job.fit_version = FIT_VERSION
+    assert fit_is_current(job, profile) is True
+
+
 async def test_fit_prompt_uses_profile_and_role_not_discovery(profile: Profile) -> None:
     job = _job()
     client = _Client(_payload(84))
     decision = await evaluate_fit(job, profile, client, model="test", max_tokens=256)
     assert decision.available is True
     assert decision.score == 84
-    assert profile.identity.full_name in client.system
+    assert profile.identity.full_name not in client.system
+    assert profile.skills[0] in client.system
     assert "transferable" in client.system.lower()
     assert "prestige" in client.system.lower()
     assert "PRODUCT_MANAGEMENT" in client.user
@@ -238,7 +338,7 @@ async def test_fit_cache_tracks_jd_profile_and_version(profile: Profile, db_read
 
     job.content_hash = first.content_hash
     job.fit_content_hash = first.content_hash
-    other = profile.model_copy(update={"summary": profile.summary + " extra fact"})
+    other = profile.model_copy(update={"skills": [*profile.skills, "Origami"]})
     await evaluate_fit(job, other, client, model="test", max_tokens=64)
     assert client.calls == 3
 
@@ -287,6 +387,7 @@ async def test_insufficient_fit_is_not_stored_as_zero(profile: Profile, db_ready
 
 def test_fit_blocks_include_the_profile(profile: Profile) -> None:
     blocks = build_fit_system_blocks(profile)
-    assert profile.identity.full_name in blocks[0]["text"]
+    assert profile.skills[0] in blocks[0]["text"]
+    assert profile.identity.full_name not in blocks[0]["text"]
     user = build_fit_user(_job())
     assert "Evaluate this job posting" in user

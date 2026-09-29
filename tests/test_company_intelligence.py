@@ -24,6 +24,7 @@ from scorer.company_intelligence import (
     attach_company_intelligence,
     canonical_company_name,
     extract_company_facts,
+    merge_company_facts,
     normalize_company_name,
     refresh_company_intelligence,
     resolve_company,
@@ -572,3 +573,100 @@ async def test_company_sources_accumulate_and_a_failed_refresh_keeps_them(db_rea
         assert left.company_intelligence_id == right.company_intelligence_id == kept.id
         assert left.score == 90
         assert right.score == 60
+
+
+def test_merge_company_facts_keeps_omitted_fields() -> None:
+    existing = {
+        "industry": "software",
+        "public_private": "public",
+        "headquarters": "Seattle",
+        "employee_range": "Approximately 5,000 employees",
+        "founded_year": 2008,
+        "parent_company": "Northwind",
+        "company_type": "subsidiary",
+        "business_description": "providing inventory software",
+    }
+    sparse = extract_company_facts("Acme is headquartered in Austin.")
+    merged = merge_company_facts(existing, sparse)
+    assert merged["headquarters"] == "Austin"
+    assert merged["industry"] == "software"
+    assert merged["founded_year"] == 2008
+    assert merged["public_private"] == "public"
+    assert merge_company_facts({"industry": None}, {"industry": None})["industry"] is None
+
+
+async def test_sparse_refresh_does_not_erase_known_facts(db_ready: Path) -> None:
+    provider = FakeProvider(FULL_TEXT)
+    official = "https://acme.example/about"
+    careers = "https://careers.acme.example/about"
+    async with session_scope() as session:
+        first = await resolve_company(
+            session,
+            "Acme",
+            source_url=official,
+            source_type="official_website",
+            provider=provider,
+        )
+        assert first.status == "complete"
+        assert first.founded_year == 2008
+        provider.text = "Acme is headquartered in Austin."
+        second = await refresh_company_intelligence(
+            session,
+            "Acme",
+            source_url=careers,
+            source_type="careers",
+            provider=provider,
+        )
+        assert second.headquarters == "Austin"
+        assert second.industry == "software"
+        assert second.founded_year == 2008
+        assert second.public_private == "public"
+        assert second.parent_company == "Northwind"
+        assert second.status == "complete"
+        urls = [item["url"] for item in second.sources]
+        assert urls == [official, careers]
+        again = await refresh_company_intelligence(
+            session,
+            "Acme",
+            source_url=official,
+            source_type="official_website",
+            provider=provider,
+        )
+        assert [item["url"] for item in again.sources] == urls
+        provider.raise_exc = TimeoutError("slow")
+        kept = await refresh_company_intelligence(
+            session,
+            "Acme",
+            source_url=careers,
+            source_type="careers",
+            provider=provider,
+        )
+        assert kept.industry == "software"
+        assert kept.headquarters == "Austin"
+        assert [item["url"] for item in kept.sources] == urls
+
+        sparse = FakeProvider(ACME_TEXT)
+        blank = await resolve_company(session, "Sparse Co")
+        assert blank.status == "unresolved"
+        assert blank.industry is None
+        started = await refresh_company_intelligence(
+            session,
+            "Sparse Co",
+            source_url="https://sparse.example/about",
+            source_type="official_website",
+            provider=sparse,
+        )
+        assert started.status == "partial"
+        assert started.industry == "software"
+        sparse.text = FULL_TEXT
+        finished = await refresh_company_intelligence(
+            session,
+            "Sparse Co",
+            source_url="https://sparse.example/sec",
+            source_type="sec",
+            provider=sparse,
+        )
+        assert finished.status == "complete"
+        assert finished.industry == "software"
+        assert finished.founded_year == 2008
+        assert len(finished.sources) == 2

@@ -16,7 +16,7 @@ A preferred gap is `unknown` or a light `gap`. A missing required item is a `gap
 
 If Phase 4 marked the description missing or suspicious, or the description is empty, fit is unavailable. The score stays empty. The job is not given 0 and is not filtered out. A description without that Phase 4 flag still goes through the existing scoring path so older rows keep their behavior.
 
-The same description hash, profile hash, and `phase6-v1` reuse the stored fit and do not call the model. A new description, a changed profile block, or a new fit version asks again. A changed description also clears the stored fit when the job row is updated.
+The fit prompt uses education, experience, skills, and location or work-mode facts. It does not include contact details, profile URLs, visa status, or dream companies. The same description hash, that fit profile hash, and `phase6-v2` reuse the stored fit and do not call the model. A stored `phase6-v1` result is stale. A new description, a changed fit fact, or a new fit version asks again. A changed description also clears the stored fit when the job row is updated.
 
 ## Output
 

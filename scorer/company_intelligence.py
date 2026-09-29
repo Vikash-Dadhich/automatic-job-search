@@ -306,6 +306,17 @@ def _confidence_for(status: str, source_type: str) -> str:
     return "low"
 
 
+def merge_company_facts(existing: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Keep a known fact when the newer page does not state a replacement."""
+    merged: dict[str, Any] = {}
+    for name in _FACT_FIELDS:
+        incoming = new.get(name)
+        if isinstance(incoming, str) and not incoming.strip():
+            incoming = None
+        merged[name] = existing.get(name) if incoming is None else incoming
+    return merged
+
+
 def _apply_facts(row: CompanyIntelligence, facts: dict[str, Any]) -> None:
     row.industry = facts["industry"]
     row.public_private = facts["public_private"]
@@ -408,6 +419,8 @@ async def resolve_company(
             fields=sorted(looked_up.claimed),
         )
     row = existing or _new_row(company_name, key)
+    prior = {name: getattr(row, name) for name in _FACT_FIELDS}
+    facts = merge_company_facts(prior, facts)
     _apply_facts(row, facts)
     stored_type = _source_type(document.source_type or kind)
     row.sources = _accumulate_sources(

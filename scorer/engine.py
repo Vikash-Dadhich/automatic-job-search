@@ -650,6 +650,7 @@ class Scorer:
                 target = await get_job_by_id(session, job.id)
                 if target is None:
                     return _JobOutcome(kind="error", detail=f"job {job.id} missing")
+                from scorer.fit import FIT_VERSION
 
                 try:
                     from scorer.eligibility import attach_eligibility
@@ -668,7 +669,7 @@ class Scorer:
                     target.fit_gaps = evaluation.fit_gaps
                     target.fit_evidence = evaluation.fit_evidence
                     target.fit_dimensions = evaluation.fit_dimensions or None
-                    target.fit_version = "phase6-v1"
+                    target.fit_version = FIT_VERSION
                     target.fit_content_hash = evaluation.fit_content_hash
                     target.fit_profile_hash = evaluation.fit_profile_hash
                     target.justification = evaluation.reasons
@@ -690,7 +691,7 @@ class Scorer:
                 target.fit_gaps = evaluation.fit_gaps or None
                 target.fit_evidence = evaluation.fit_evidence or None
                 target.fit_dimensions = evaluation.fit_dimensions or None
-                target.fit_version = "phase6-v1"
+                target.fit_version = FIT_VERSION
                 target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
                 target.fit_profile_hash = evaluation.fit_profile_hash
                 target.updated_at = now

@@ -15,7 +15,7 @@ from core.db import Job
 from core.token_optimizer import cache_block, minify_job
 from scorer.clients import LLMClient
 
-FIT_VERSION = "phase6-v1"
+FIT_VERSION = "phase6-v2"
 _MIN_JD_CHARS = 80
 
 DIMENSIONS = (
@@ -119,10 +119,33 @@ class FitDecision:
     legacy: bool = False
 
 
+def fit_context_block(profile: Profile) -> str:
+    """Candidate facts used for fit. Contact details and visa status stay out."""
+    education = "; ".join(
+        f"{item.degree} {item.field}, {item.school} ({item.graduation_date})"
+        + (f", GPA {item.gpa}" if item.gpa is not None else "")
+        for item in profile.education
+    )
+    experience = "\n".join(
+        f"- {item.title} @ {item.company} ({item.start_date}–{item.end_date}): "
+        + " | ".join(item.bullets)
+        for item in profile.experience
+    )
+    places = ", ".join(profile.preferences.locations)
+    return (
+        f"Location: {profile.identity.location}\n"
+        f"Education: {education}\n"
+        f"Experience:\n{experience}\n"
+        f"Skills: {', '.join(profile.skills)}\n"
+        f"Work mode: locations={places}; "
+        f"remote_ok={profile.preferences.remote_ok}; "
+        f"relocation_ok={profile.preferences.relocation_ok}"
+    )
+
+
 def profile_fit_hash(profile: Profile) -> str:
-    """Hash of the candidate block the fit prompt uses."""
-    text = profile.static_context_block().strip()
-    return hashlib.sha256(text.encode()).hexdigest()
+    """Hash of the fit candidate block. Contact and visa edits do not change it."""
+    return hashlib.sha256(fit_context_block(profile).strip().encode()).hexdigest()
 
 
 def fit_is_current(job: Job, profile: Profile) -> bool:
@@ -189,7 +212,7 @@ def _legacy(data: dict[str, Any], job: Job, profile: Profile) -> FitDecision | N
     score = max(0, min(100, score))
     reasons = _ground(
         _lines(data.get("r")),
-        f"{profile.static_context_block()}\n{job.description_clean or ''}",
+        f"{fit_context_block(profile)}\n{job.description_clean or ''}",
     )
     return FitDecision(
         available=True,
@@ -228,7 +251,7 @@ def parse_fit(text: str, job: Job, profile: Profile) -> FitDecision | None:
     for item in payload.dimensions.values():
         if item.judgment not in _JUDGMENTS:
             return None
-    corpus = f"{profile.static_context_block()}\n{job.description_clean or ''}\n{job.title or ''}"
+    corpus = f"{fit_context_block(profile)}\n{job.description_clean or ''}\n{job.title or ''}"
     strengths = _ground(_lines(payload.strengths), corpus)
     gaps = _ground(_lines(payload.gaps), corpus)
     evidence = _ground(_lines(payload.evidence), corpus)
@@ -253,7 +276,7 @@ def parse_fit(text: str, job: Job, profile: Profile) -> FitDecision | None:
 def build_fit_system_blocks(profile: Profile) -> list[dict[str, Any]]:
     text = (
         "CANDIDATE (ground truth — do not invent beyond this):\n"
-        f"{profile.static_context_block()}\n\n"
+        f"{fit_context_block(profile)}\n\n"
         f"RUBRIC:\n{FIT_RUBRIC}"
     )
     return [cache_block(text)]
