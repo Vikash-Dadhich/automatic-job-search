@@ -153,7 +153,9 @@ def test_incremental_unique_and_duplicate_follow_plan_order() -> None:
     assert by_query["First"].unique == 1
     assert by_query["First"].incremental == 1
     assert by_query["First"].duplicate == 1
+    assert by_query["Second"].unique == 2
     assert by_query["Second"].incremental == 1
+    assert by_query["Second"].duplicate == 0
     assert by_query["Third"].incremental == 0
     assert report.raw == 5
     assert report.unique == 2
@@ -163,6 +165,49 @@ def test_incremental_unique_and_duplicate_follow_plan_order() -> None:
     assert families["PRODUCT_MANAGEMENT"].incremental == 1
     assert families["CONSULTING"].incremental == 1
     assert sum(row.incremental for row in report.families) == report.unique
+
+
+def test_query_duplicate_counts_repeats_inside_the_search() -> None:
+    plan = _plan(
+        ("PRODUCT_MANAGEMENT", "PM_CORE", "Earlier"),
+        ("CONSULTING", "MANAGEMENT_CONSULTING", "Repeated"),
+        ("CONSULTING", "MANAGEMENT_CONSULTING", "Repeated with copy"),
+    )
+    observations = [
+        observe_search(
+            family_id="PRODUCT_MANAGEMENT",
+            bucket_id="PM_CORE",
+            query="Earlier",
+            source="linkedin",
+            hits=("linkedin:job1", "linkedin:job2"),
+        ),
+        observe_search(
+            family_id="CONSULTING",
+            bucket_id="MANAGEMENT_CONSULTING",
+            query="Repeated",
+            source="linkedin",
+            hits=("linkedin:job1", "linkedin:job2"),
+        ),
+        observe_search(
+            family_id="CONSULTING",
+            bucket_id="MANAGEMENT_CONSULTING",
+            query="Repeated with copy",
+            source="linkedin",
+            hits=("linkedin:job1", "linkedin:job2", "linkedin:job2"),
+        ),
+    ]
+    report = build_coverage_report(plan, observations)
+    by_query = {row.query: row for row in report.queries if row.source == "linkedin"}
+    repeated = by_query["Repeated"]
+    assert repeated.raw == 2
+    assert repeated.unique == 2
+    assert repeated.incremental == 0
+    assert repeated.duplicate == 0
+    copied = by_query["Repeated with copy"]
+    assert copied.raw == 3
+    assert copied.unique == 2
+    assert copied.incremental == 0
+    assert copied.duplicate == 1
 
 
 def test_same_external_id_on_two_sources_stays_two_discoveries() -> None:

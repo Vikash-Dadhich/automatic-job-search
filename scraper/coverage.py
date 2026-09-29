@@ -360,7 +360,7 @@ def build_coverage_report(
             unique=unique,
             incremental=incremental,
             unidentified=observation.unidentified_count,
-            duplicate=max(0, identifiable - incremental),
+            duplicate=max(0, identifiable - unique),
             error=observation.error,
         )
         queries.append(row)
