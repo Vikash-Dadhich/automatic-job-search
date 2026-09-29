@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +15,7 @@ from bot.outcomes import send_pending_outcome_prompts
 from bot.prep import send_prep_pack
 from bot.review import send_pending_reviews
 from bot.suggest import send_pending_suggestions
+from config.diagnostics import effective_baseline, write_effective_baseline
 from config.settings import get_settings
 from resume.compiler import prepare_pending
 from resume.diff import generate_suggestions_for_job
@@ -149,6 +151,27 @@ async def run_pipeline(
         scoring = summary.stages.get("scoring")
         raw_ids = getattr(scoring, "scored_ids", []) or []
         return await _send_prep_pack(job_ids=list(raw_ids))
+
+    baseline = effective_baseline(settings)
+    baseline_path = None
+    if os.environ.get("PYTEST_CURRENT_TEST") is None:
+        try:
+            baseline_path = write_effective_baseline()
+        except OSError as exc:
+            log.warning("pipeline_baseline_write_failed", error=str(exc))
+    log.info(
+        "pipeline_baseline",
+        path=str(baseline_path) if baseline_path else None,
+        **baseline,
+    )
+    if not settings.internship_only:
+        log.warning(
+            "pipeline_internship_only_off",
+            hint=(
+                "Full-time titles will be ingested. "
+                "Production sets INTERNSHIP_ONLY=true."
+            ),
+        )
 
     log.info(
         "pipeline_start",

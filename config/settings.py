@@ -152,8 +152,10 @@ class Settings(BaseSettings):
     internship_only: bool = Field(
         default=False,
         description=(
-            "When true, reject any posting whose title does not contain 'intern' or 'internship'. "
-            "Set to true while targeting summer internships."
+            "When true, reject postings whose title has no internship signal. "
+            "The code default stays false so tests and a full-time search still work. "
+            "GitHub Actions production sets INTERNSHIP_ONLY=true. A local run that "
+            "omits the variable will score full-time titles."
         ),
     )
     enable_seniority_filter: bool = Field(

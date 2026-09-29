@@ -1,27 +1,44 @@
 # Grounded Master Candidate Profile — Single Source of Truth
 # The LLM must NEVER invent facts outside this file.
-# Filled from Foster MBA resume (Vikash Dadhich). TODO fields are not on the resume.
+# Updated from the Sept 2026 Foster resume, LinkedIn, and Vikash's own career notes.
+# Street address is still unconfirmed. Do not invent one.
 
 identity:
   full_name: "Vikash Dadhich"
   email: "vikash98@uw.edu"
-  phone: "+91-8094110701"
+  phone: "+1-206-228-8984"
   location: "Seattle, WA"
   linkedin_url: "https://www.linkedin.com/in/vikash-dadhich/"
   github_url: "https://github.com/Vikash-Dadhich"
   portfolio_url: null
   address:
-    street: "4231 12th Ave NE, Seattle, WA"  # TODO: needed for Workday form autofill
+    street: "4231 12th Ave NE, Seattle, WA"  # TODO: confirm before Workday autofill
     city: "Seattle"
     state: "WA"
-    zip: "98105"  # TODO: needed for Workday form autofill
+    zip: "98105"  # TODO: confirm before Workday autofill
     country: "United States"
 
 work_authorization:
-  status: "F-1 student visa"
+  # F-1. CPT can authorize a specific internship. This block does not reject a
+  # posting just because it never mentions sponsorship. Hostile phrases are
+  # filtered because sponsorship_required and needs_visa_sponsorship are true.
+  # authorized_to_work_us is unrestricted work authorization, which form-fill
+  # answers as No. It is not a claim that CPT internships are impossible.
+  status: "F-1 student visa; CPT can cover internships; full-time roles need sponsorship"
   sponsorship_required: true
   authorized_to_work_us: false
   needs_visa_sponsorship: true
+
+summary: >
+  MBA candidate and Dean's Merit Fellow at UW Foster, graduating June 2028.
+  Previously Manager, Development at Standard Chartered GBS in Bangalore, after
+  moving from testing into software development, then Senior Software Developer
+  (April 2024) and Manager (September 2025) on the EProduct 2.0 banking
+  governance platform. Led a 9-person team. GMAT Focus 685 on October 10, 2025
+  (about a 730 classic equivalent, 96th percentile). Wants product management,
+  technology strategy, and other roles that keep the technical background and
+  add product and business ownership. B.Tech in Metallurgical and Materials
+  Engineering, NITK Surathkal, May 2021, CGPA 7.68/10.
 
 education:
   - degree: "MBA"
@@ -35,7 +52,7 @@ education:
     school: "National Institute of Technology Karnataka (NITK)"
     location: "Surathkal, India"
     graduation_date: "2021-05"
-    gpa: null
+    gpa: 7.68
 
 experience:
   - title: "Co-founder and Technical Product Lead"
@@ -45,8 +62,9 @@ experience:
     end_date: "present"
     bullets:
       - "Co-founded a digital wellness venture; designed a closed-loop platform bridging early diagnostic screening with end-to-end care resolutions using a 4,000+ user validation dataset; on track to reach 15 schools and 12,000 students in 2026"
-      - "Orchestrated phased market entry strategy using RICE prioritization; launched school web MVP that reduced time-to-market from 9 to 3 months while managing an 8-portal, 3-application portfolio under $100/month"
-      - "Deployed automated 24 hr PII purges and 10 security validation checks across 54 database models, reducing production rollout risks by 60%"
+      - "Orchestrated phased market entry using RICE prioritization; launched a school web MVP that cut time-to-market from 9 months to 3 months while running an 8-portal, 3-application portfolio under $100/month"
+      - "Designed a severity scoring algorithm across 120 assessment questions, reducing doctor review time from 1–2 hours to under 3 minutes"
+      - "Deployed automated 24-hour PII purges and 10 security validation checks across 54 database models, reducing production rollout risks by 60%"
 
   - title: "Manager – Development"
     company: "Standard Chartered GBS"
@@ -54,9 +72,10 @@ experience:
     start_date: "2025-09"
     end_date: "2026-08"
     bullets:
-      - "Spearheaded a 9-member team migrating 22 critical banking workflows from legacy to open-source; optimized trade-offs to collapse an 800-day roadmap to 4 months, securing $1.5M in savings"
-      - "Generated $50K USD in net-new revenue by incubating an internal data-monetization module; externalized proprietary product catalog assets via a net-new \"Payoff\" capability"
-      - "Directed secure platform cutover and data transition for 1,000+ high-security asset portfolios across isolated networks with zero data loss; eliminated 40% of redundant data flaws to cut storage costs by 30%"
+      - "Led a 9-member team migrating 22 critical banking workflows on EProduct 2.0 from PEGA to Quarkus, GraphQL, and Lit Web Components; collapsed an 800-day roadmap to 4 months and secured $1.5M in savings"
+      - "Generated $50K in net-new revenue by incubating an internal data-monetization module; opened proprietary product catalog assets through a new Payoff capability"
+      - "Directed the platform cutover and data transition for 1,000+ high-security asset portfolios across isolated networks with zero data loss; removed 40% of redundant data flaws and cut storage costs by 30%"
+      - "Redesigned the core database from 50+ tables to 8 and cut load time from about 90 seconds to 30 seconds, about a 3x improvement in query and load responsiveness"
 
   - title: "Senior Software Developer"
     company: "Standard Chartered GBS"
@@ -64,9 +83,10 @@ experience:
     start_date: "2024-04"
     end_date: "2025-09"
     bullets:
-      - "Discovered and launched a net-new Amendment Workflow Module to address unmapped requirements managing 800–1,000 updates daily; collapsed amendment cycles from 6 months to 3 weeks"
-      - "Automated enterprise governance pipelines and re-engineered platform modules, reducing manual cross-team handoffs by 80% and improving operational efficiency by 40%"
-      - "Commanded emergency incident response framework for an unscheduled P1 production rollout failure; coordinated approvals under intense pressure to restore system health with zero operational downtime"
+      - "Discovered and launched a net-new Amendment Workflow Module for unmapped requirements covering 800–1,000 updates annually; collapsed amendment cycles from 6 months to 3 weeks"
+      - "Automated enterprise governance pipelines and reworked platform modules, reducing manual cross-team handoffs by 80% and improving operational efficiency by 40%"
+      - "Led incident response for an unscheduled P1 production rollout failure and restored the system with zero operational downtime"
+      - "Shipped 30+ REST APIs on Jakarta REST in Quarkus, integrated with Hasura GraphQL"
 
   - title: "Software Developer"
     company: "Standard Chartered GBS"
@@ -74,8 +94,8 @@ experience:
     start_date: "2021-07"
     end_date: "2024-04"
     bullets:
-      - "Co-designed intuitive workflow interface for the EProduct 2.0 governance platform; minimized cognitive overhead to secure an 85% enterprise adoption rate and reduce operational delays"
-      - "Led UAT and release QA; designed parameters slashing post-deployment bugs by 80%"
+      - "Co-designed the workflow interface for the EProduct 2.0 governance platform and reached an 85% enterprise adoption rate"
+      - "Headed end-to-end user acceptance testing and release quality checks; test coverage cut post-deployment defects by 80%"
 
 skills:
   - "Product Strategy"
@@ -86,12 +106,20 @@ skills:
   - "Wireframing"
   - "Python"
   - "Java"
-  - "JavaScript/TypeScript"
+  - "JavaScript"
   - "React.js"
   - "React Native"
   - "NestJS"
   - "Spring Boot"
   - "GraphQL"
+  - "SQL"
+  - "Excel"
+  - "Quarkus"
+  - "REST APIs"
+  - "Hasura"
+  - "PostgreSQL"
+  - "Oracle SQL"
+  - "Lit Web Components"
 
 preferences:
   titles:
@@ -120,6 +148,8 @@ preferences:
     - "Consulting Intern"
     - "Summer Intern"
   locations:
+    # Preference only. Pre-rank adds +8 for Seattle. relocation_ok keeps other
+    # U.S. cities, hybrid, and relocation. This list is not a Seattle-only gate.
     - "Seattle, WA"
     - "Remote"
   remote_ok: true

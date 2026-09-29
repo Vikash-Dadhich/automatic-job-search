@@ -333,6 +333,7 @@ async def _build_doctor_report() -> dict[str, Any]:
 
     from sqlmodel import col, select
 
+    from config.diagnostics import effective_baseline
     from config.settings import get_settings
     from core.db import (
         Job,
@@ -495,6 +496,7 @@ async def _build_doctor_report() -> dict[str, Any]:
             "pass": vector_pass,
         },
         "recent_errors": recent_errors,
+        "baseline": effective_baseline(settings),
     }
 
 
@@ -504,6 +506,23 @@ def _print_doctor_report(report: dict[str, Any]) -> None:
     width = max((len(name) for name in counts), default=12)
     print("=== Job Agent Health Report ===")
     print(f"Generated: {report['generated_at']}")
+    baseline: dict[str, Any] | None = report.get("baseline")
+    if baseline:
+        print()
+        print("--- Baseline ---")
+        print(f"  profile_hash={baseline['profile_hash']}")
+        print(f"  effective_config_hash={baseline['effective_config_hash']}")
+        print(
+            f"  internship_only={baseline['internship_only']}  "
+            f"scorer={baseline['scorer_model']}  "
+            f"embedding={baseline['embedding_model']}@{baseline['embedding_threshold']}"
+        )
+        print(
+            f"  tiers={baseline['tier_one_min_score']}/{baseline['tier_two_min_score']}  "
+            f"jd_chars={baseline['max_jd_chars']}  "
+            f"vector_gate={baseline['vector_gate_enabled']}  "
+            f"score_budget={baseline['score_budget']}"
+        )
     print()
     print("--- Pipeline Funnel ---")
     for name, count in counts.items():

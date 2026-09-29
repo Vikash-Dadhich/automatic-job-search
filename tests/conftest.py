@@ -27,6 +27,13 @@ def _disable_vector_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _internship_only_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lock the code default. A developer .env may set INTERNSHIP_ONLY=true."""
+    monkeypatch.setenv("INTERNSHIP_ONLY", "false")
+    get_settings.cache_clear()
+
+
 @pytest.fixture
 def tmp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Point DATABASE_URL at a temp sqlite file and clear cached settings/engine."""

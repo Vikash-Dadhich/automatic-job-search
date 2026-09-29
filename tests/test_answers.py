@@ -192,3 +192,7 @@ def test_answers_to_payload(profile) -> None:
 def test_load_profile_fixture() -> None:
     p = load_profile()
     assert p.identity.email
+    block = p.static_context_block()
+    assert "800–1,000 updates annually" in block
+    assert "Dean's Merit Fellow" in block
+    assert "Quarkus" in block

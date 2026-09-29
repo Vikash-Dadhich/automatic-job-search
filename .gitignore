@@ -34,6 +34,7 @@ storage/screenshots/*
 !storage/screenshots/.gitkeep
 storage/prep_packs/*
 !storage/prep_packs/.gitkeep
+storage/diagnostics/*
 
 # Graphify: commit the graph, skip local cache and spend logs
 graphify-out/cost.json

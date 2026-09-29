@@ -106,6 +106,7 @@ class Profile(BaseModel):
     skills: list[str] = Field(min_length=1)
     preferences: Preferences
     exclusions: Exclusions = Field(default_factory=Exclusions)
+    summary: str = ""
 
     def total_years_experience(self, *, today: date | None = None) -> float:
         """Approximate career length in years, spanning earliest start to latest end."""
@@ -126,11 +127,16 @@ class Profile(BaseModel):
     def static_context_block(self) -> str:
         """Compact, cacheable candidate summary for LLM system prompts (Step 3)."""
         edu = "; ".join(
-            f"{e.degree} {e.field}, {e.school} ({e.graduation_date})" for e in self.education
+            f"{e.degree} {e.field}, {e.school} ({e.graduation_date})"
+            + (f", GPA {e.gpa}" if e.gpa is not None else "")
+            for e in self.education
         )
-        exp = "; ".join(
-            f"{e.title} @ {e.company} ({e.start_date}–{e.end_date})" for e in self.experience
+        exp = "\n".join(
+            f"- {e.title} @ {e.company} ({e.start_date}–{e.end_date}): "
+            + " | ".join(e.bullets)
+            for e in self.experience
         )
+        summary = f"Summary: {self.summary.strip()}\n" if self.summary.strip() else ""
         return (
             f"Name: {self.identity.full_name}\n"
             f"Location: {self.identity.location}\n"
@@ -138,10 +144,13 @@ class Profile(BaseModel):
             f"Phone: {self.identity.phone}\n"
             f"LinkedIn: {self.identity.linkedin_url}\n"
             f"GitHub: {self.identity.github_url}\n"
+            f"{summary}"
             f"Work auth: {self.work_authorization.status}; "
-            f"sponsorship_required={self.work_authorization.sponsorship_required}\n"
+            f"sponsorship_required={self.work_authorization.sponsorship_required}; "
+            f"authorized_to_work_us={self.work_authorization.authorized_to_work_us}; "
+            f"needs_visa_sponsorship={self.work_authorization.needs_visa_sponsorship}\n"
             f"Education: {edu}\n"
-            f"Experience: {exp}\n"
+            f"Experience:\n{exp}\n"
             f"Skills: {', '.join(self.skills)}\n"
             f"Target titles: {', '.join(self.preferences.titles)}\n"
             f"Target locations: {', '.join(self.preferences.locations)}; "
