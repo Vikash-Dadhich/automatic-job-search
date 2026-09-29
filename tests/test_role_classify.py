@@ -403,3 +403,52 @@ async def test_unchanged_jd_keeps_classification_and_a_change_replaces_it(db_rea
         assert changed is not None
         assert changed.role_family == "PRODUCT_MARKETING"
         assert changed.role_evidence != ["cached"]
+
+
+def test_classifier_version_bump_invalidates_phase5_v1() -> None:
+    assert ROLE_CLASSIFIER_VERSION == "phase5-v2"
+    assert not classification_is_current(
+        role_family="OTHER",
+        role_content_hash="abc",
+        role_classifier_version="phase5-v1",
+        content_hash="abc",
+    )
+    assert classification_is_current(
+        role_family="MARKETING",
+        role_content_hash="abc",
+        role_classifier_version=ROLE_CLASSIFIER_VERSION,
+        content_hash="abc",
+    )
+
+
+async def test_stale_classifier_version_is_replaced_on_reprocess(db_ready: Path) -> None:
+    del db_ready
+    from scraper.ingest import _apply_role_classification
+
+    description = _jd(
+        "Own marketing strategy, brand planning, and campaign development for the summer."
+    )
+    posting = RawPosting(
+        source=Source.linkedin,
+        external_id="role-stale",
+        title="2027 MBA Marketing Summer Associate",
+        company="GoodCo",
+        url="https://example.com/role-stale",
+        description_clean=description,
+    )
+    stored = to_job(posting)
+    stored.role_family = "OTHER"
+    stored.role_subfamily = None
+    stored.role_confidence = "low"
+    stored.role_evidence = ["old taxonomy"]
+    stored.role_classifier_version = "phase5-v1"
+    stored.role_content_hash = stored.content_hash
+    async with session_scope() as session:
+        await upsert_job(session, stored)
+        incoming = to_job(posting)
+        await _apply_role_classification(session, incoming, None)
+        saved = await upsert_job(session, incoming)
+    assert saved.role_family == "MARKETING"
+    assert saved.role_subfamily == "MARKETING_GENERAL"
+    assert saved.role_classifier_version == "phase5-v2"
+    assert saved.role_content_hash == saved.content_hash

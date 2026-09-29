@@ -20,7 +20,7 @@ A description under 80 characters is unknown and is not sent to a model. Clear p
 
 ## Output
 
-Stored fields are `role_family`, `role_subfamily`, `role_confidence` (`high`, `medium`, or `low`), `role_evidence`, `role_classifier_version` (`phase5-v1`), and `role_content_hash`.
+Stored fields are `role_family`, `role_subfamily`, `role_confidence` (`high`, `medium`, or `low`), `role_evidence`, `role_classifier_version` (`phase5-v2`), and `role_content_hash`.
 
 Confidence is how sure the label is. It is not a fit score and it does not change tier, rank, or status.
 

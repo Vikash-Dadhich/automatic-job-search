@@ -176,11 +176,9 @@ def has_internship_signal(
     blob = f"{title or ''}\n{description or ''}"
     if _MBA_SUMMER_ASSOCIATE_RE.search(title or ""):
         return True
-    if _SUMMER_ASSOCIATE_FOCUS_RE.search(title or ""):
-        return True
-    if re.search(r"\bsummer\s+associate\b", title or "", re.IGNORECASE) and _MBA_PROGRAM_RE.search(
-        blob
-    ):
+    # A function next to Summer Associate is not enough. The posting still
+    # needs an MBA or summer-internship phrase in the title or description.
+    if _SUMMER_ASSOCIATE_FOCUS_RE.search(title or "") and _MBA_PROGRAM_RE.search(blob):
         return True
     if _MBA_ASSOCIATE_RE.search(title or "") and _SUMMER_OR_INTERN_RE.search(blob):
         return True

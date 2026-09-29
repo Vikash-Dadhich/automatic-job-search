@@ -142,17 +142,25 @@ def test_mba_summer_associate_is_an_internship_signal(profile, monkeypatch) -> N
         "2027 MBA Summer Associate",
         "MBA Marketing Summer Associate",
         "MBA Strategy Summer Associate",
-        "Summer Associate, Corporate Strategy",
-        "Summer Associate, Product Management",
         "Product Management Intern",
         "Marketing Intern",
         "Strategy Intern",
     ]
     for title in yes:
         assert has_internship_signal(title), title
-    strategy = "Summer Associate, Strategy"
-    jd = "This MBA summer internship is a 11-week internship for MBA students."
-    assert has_internship_signal(strategy, description=jd)
+    mba_internship = "This MBA summer internship is an 11-week internship for MBA students."
+    for title in (
+        "Summer Associate, Strategy",
+        "Summer Associate, Corporate Strategy",
+        "Summer Associate, Product Management",
+    ):
+        assert has_internship_signal(title, description=mba_internship), title
+        assert not has_internship_signal(title), title
+    plain = (
+        "Support the strategy organization with research, analysis, and executive presentations."
+    )
+    assert not has_internship_signal("Summer Associate, Strategy", description=plain)
+    assert not has_internship_signal("Summer Associate, Marketing", description=plain)
     for title in (
         "Associate",
         "Senior Associate",
@@ -162,6 +170,7 @@ def test_mba_summer_associate_is_an_internship_signal(profile, monkeypatch) -> N
         "Summer Associate",
     ):
         assert not has_internship_signal(title), title
+        assert not has_internship_signal(title, description=plain), title
     monkeypatch.setenv("INTERNSHIP_ONLY", "true")
     from config.settings import get_settings
 
@@ -192,6 +201,34 @@ def test_mba_summer_associate_is_an_internship_signal(profile, monkeypatch) -> N
         profile,
     )
     assert blocked.passed is False
+    no_context = evaluate(
+        RawPosting(
+            source=Source.linkedin,
+            external_id="sa-plain",
+            title="Summer Associate, Strategy",
+            company="Acme",
+            location="Remote",
+            url="https://example.com/sa-plain",
+            description_clean=_jd("Support the strategy team with research and analysis."),
+        ),
+        profile,
+    )
+    assert no_context.passed is False
+    with_context = evaluate(
+        RawPosting(
+            source=Source.linkedin,
+            external_id="sa-mba",
+            title="Summer Associate, Strategy",
+            company="Acme",
+            location="Remote",
+            url="https://example.com/sa-mba",
+            description_clean=_jd(
+                "This MBA summer internship is an 11-week internship for MBA students."
+            ),
+        ),
+        profile,
+    )
+    assert with_context.passed is True
     get_settings.cache_clear()
 
 

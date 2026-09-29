@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from scorer.clients import LLMClient
 
-ROLE_CLASSIFIER_VERSION = "phase5-v1"
+ROLE_CLASSIFIER_VERSION = "phase5-v2"
 
 PRIMARY_FAMILIES = frozenset(
     {
