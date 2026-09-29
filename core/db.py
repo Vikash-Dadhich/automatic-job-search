@@ -117,6 +117,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "eligibility_version": "VARCHAR(32)",
         "eligibility_content_hash": "VARCHAR(64)",
         "eligibility_profile_hash": "VARCHAR(64)",
+        "canonical_url": "VARCHAR(2048)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -159,6 +160,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "eligibility_version": "VARCHAR(32)",
         "eligibility_content_hash": "VARCHAR(64)",
         "eligibility_profile_hash": "VARCHAR(64)",
+        "canonical_url": "VARCHAR(2048)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -237,6 +239,8 @@ class Job(SQLModel, table=True):
     company: str = Field(max_length=512)
     location: str | None = Field(default=None, max_length=512)
     url: str = Field(max_length=2048)
+    # Lookup key for the posting URL. Not unique: a homepage must not collapse jobs.
+    canonical_url: str | None = Field(default=None, max_length=2048, index=True)
     description_clean: str | None = Field(default=None)
     posted_at: datetime | None = _tz_datetime(nullable=True)
     discovered_at: datetime = _tz_datetime(default_factory=_utcnow)
@@ -660,12 +664,75 @@ def _keep_stored_description(existing: Job, incoming: Job) -> bool:
     return _incoming_description_unusable(incoming) and _stored_description_usable(existing)
 
 
-async def upsert_job(session: AsyncSession, job: Job) -> Job:
-    """Insert a job or update mutable fields when (source, external_id) already exists.
+def _assign_canonical_url(job: Job) -> None:
+    from core.job_identity import canonicalize_job_url, url_identifies_posting
 
-    Re-runs within 24h are idempotent: identity fields stay; description and
-    metadata refresh; scoring/workflow fields are left alone if already set.
-    A materially rewritten JD resets an unreviewed job for re-scoring.
+    canon = canonicalize_job_url(job.url)
+    job.canonical_url = canon if url_identifies_posting(canon) else None
+
+
+async def _find_cross_source_job(session: AsyncSession, job: Job) -> Job | None:
+    """Another source's row for this posting. Same-source ids are never folded together."""
+    from core.job_identity import (
+        canonicalize_job_url,
+        locations_conflict,
+        normalize_title,
+        same_employer,
+        strong_field_match,
+        url_identifies_posting,
+        urls_conflict,
+    )
+
+    canon = canonicalize_job_url(job.url)
+    if canon and url_identifies_posting(canon):
+        rows = list((await session.exec(select(Job).where(Job.canonical_url == canon))).all())
+        rows = [
+            row
+            for row in rows
+            if row.source != job.source
+            and not locations_conflict(row.location, job.location)
+            and (
+                not row.company
+                or not job.company
+                or same_employer(row.company, job.company)
+            )
+        ]
+        if len(rows) == 1:
+            return rows[0]
+        if len(rows) > 1:
+            return None
+    if not job.content_hash:
+        return None
+    rows = list(
+        (await session.exec(select(Job).where(Job.content_hash == job.content_hash))).all()
+    )
+    strong = [
+        row
+        for row in rows
+        if row.source != job.source
+        and not urls_conflict(row.url, job.url)
+        and strong_field_match(
+            company_a=row.company,
+            title_a=row.title,
+            location_a=row.location,
+            company_b=job.company,
+            title_b=job.title,
+            location_b=job.location,
+        )
+        and same_employer(row.company, job.company)
+        and normalize_title(row.title) == normalize_title(job.title)
+    ]
+    if len(strong) == 1:
+        return strong[0]
+    return None
+
+
+async def upsert_job(session: AsyncSession, job: Job) -> Job:
+    """Insert a job or update mutable fields when the posting is already stored.
+
+    The same source and external id is one job. A different source is the same
+    job only when the posting URL matches, or company, title, location, and
+    description hash all agree. Uncertain matches stay separate.
     """
     statement = select(Job).where(
         Job.source == job.source,
@@ -673,11 +740,16 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
     )
     result = await session.exec(statement)
     existing = result.first()
+    cross_source = False
+    if existing is None:
+        existing = await _find_cross_source_job(session, job)
+        cross_source = existing is not None
 
     now = datetime.now(UTC)
     if existing is None:
         job.created_at = now
         job.updated_at = now
+        _assign_canonical_url(job)
         _stamp_role_family_weight(job)
         session.add(job)
         await session.flush()
@@ -690,10 +762,21 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         and existing.content_hash is not None
         and job.content_hash != existing.content_hash
     )
-    existing.title = job.title
-    existing.company = job.company
-    existing.location = job.location
-    existing.url = job.url
+    if cross_source:
+        if job.title and not existing.title:
+            existing.title = job.title
+        if job.company and not existing.company:
+            existing.company = job.company
+        if job.location and not existing.location:
+            existing.location = job.location
+        if job.url and not existing.url:
+            existing.url = job.url
+    else:
+        existing.title = job.title
+        existing.company = job.company
+        existing.location = job.location
+        existing.url = job.url
+    _assign_canonical_url(existing)
     keep_existing_jd = _keep_stored_description(existing, job)
     if keep_existing_jd:
         content_changed = False
