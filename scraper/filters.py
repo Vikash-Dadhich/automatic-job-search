@@ -122,17 +122,42 @@ def citizenship_restriction(text: str) -> bool:
     return _matches_any(text, _CITIZENSHIP_PATTERNS)
 
 
+_CLEARANCE_MENTION_RE = re.compile(r"clearance|ts/?sci|top secret", re.IGNORECASE)
+_CLEARANCE_LOCAL_REQUIRED_RE = re.compile(
+    r"\b(?:required|requires|require|must|active)\b",
+    re.IGNORECASE,
+)
+_CLEARANCE_PREFERRED_RE = re.compile(r"\bpreferred\b", re.IGNORECASE)
+
+
+def _clearance_clauses(text: str) -> list[str]:
+    """Split so a later sentence cannot change an earlier clearance statement."""
+    parts = re.split(r"[\n;]+|(?<=[.!?])\s+", text)
+    return [part.strip() for part in parts if part and part.strip()]
+
+
 def clearance_requirement(text: str) -> str:
-    """``required``, ``preferred``, or ``none``. Preferred alone is not required."""
-    hard = _matches_any(text, _CLEARANCE_PATTERNS)
-    mentions_clearance = bool(re.search(r"clearance", text, re.IGNORECASE))
-    preferred = bool(re.search(r"\bpreferred\b", text, re.IGNORECASE)) and mentions_clearance
-    hard_words = bool(re.search(r"\b(?:required|must|active)\b", text, re.IGNORECASE))
-    if hard and preferred and not hard_words:
-        return "preferred"
-    if hard:
+    """``required``, ``preferred``, or ``none``.
+
+    Required or preferred is decided from the clause that mentions clearance,
+    not from ``must`` or ``active`` elsewhere in the posting.
+    """
+    saw_required = False
+    saw_preferred = False
+    for clause in _clearance_clauses(text):
+        if not _CLEARANCE_MENTION_RE.search(clause):
+            continue
+        preferred = _CLEARANCE_PREFERRED_RE.search(clause) is not None
+        local_required = _CLEARANCE_LOCAL_REQUIRED_RE.search(clause) is not None
+        hard = _matches_any(clause, _CLEARANCE_PATTERNS)
+        if preferred and not local_required:
+            saw_preferred = True
+            continue
+        if local_required or hard:
+            saw_required = True
+    if saw_required:
         return "required"
-    if preferred:
+    if saw_preferred:
         return "preferred"
     return "none"
 

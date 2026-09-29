@@ -8,7 +8,13 @@ from config.profile import Profile
 from core.db import Job, Source, Status
 from scorer.eligibility import CLEARLY_INELIGIBLE, UNKNOWN, evaluate_eligibility
 from scorer.fit import DIMENSIONS, parse_fit
-from scraper.filters import evaluate, evaluate_job, max_acceptable_years
+from scraper.filters import (
+    citizenship_restriction,
+    clearance_requirement,
+    evaluate,
+    evaluate_job,
+    max_acceptable_years,
+)
 from scraper.models import RawPosting
 
 
@@ -24,6 +30,45 @@ def _posting(**kwargs: object) -> RawPosting:
     }
     defaults.update(kwargs)
     return RawPosting(**defaults)  # type: ignore[arg-type]
+
+
+def test_clearance_words_must_be_about_clearance(profile: Profile) -> None:
+    preferred_only = "Security clearance is preferred."
+    unrelated_must = (
+        "Security clearance is preferred.\nCandidates must be excellent communicators."
+    )
+    unrelated_active = (
+        "Security clearance is preferred.\nThe company is active in several markets."
+    )
+    citizenship = "Security clearance is preferred.\nU.S. citizenship is required."
+    for text in (preferred_only, unrelated_must, unrelated_active, citizenship):
+        assert clearance_requirement(text) == "preferred"
+        result = evaluate(_posting(description_clean=text, external_id=text[:24]), profile)
+        assert result.passed is True
+        assert result.reason is None
+
+    required = "Security clearance is required."
+    must_have = "Must have an active security clearance."
+    required_elsewhere_preferred = (
+        "Security clearance is required.\nCommunication experience is preferred."
+    )
+    for text in (required, must_have, required_elsewhere_preferred):
+        assert clearance_requirement(text) == "required"
+        result = evaluate(_posting(description_clean=text, external_id=text[:24]), profile)
+        assert result.passed is False
+        assert result.reason is not None
+        assert "clearance" in result.reason.lower()
+
+    citizens_only = "Security clearance is preferred.\nUS citizens only."
+    assert clearance_requirement(citizens_only) == "preferred"
+    assert citizenship_restriction(citizens_only) is True
+    blocked = evaluate(
+        _posting(description_clean=citizens_only, external_id="fn-citizen"),
+        profile,
+    )
+    assert blocked.passed is False
+    assert blocked.reason is not None
+    assert "clearance" not in blocked.reason.lower()
 
 
 def test_preferred_clearance_is_not_a_hard_rejection(profile: Profile) -> None:
