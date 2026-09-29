@@ -13,6 +13,7 @@ import structlog
 from config.profile import Profile
 from config.targets import SearchConfig, Targets
 from core.db import Source
+from scraper.discovery import DiscoveryPlan, PlannedSearch
 from scraper.filters import location_acceptable
 from scraper.models import RawPosting
 
@@ -80,6 +81,7 @@ def _dataframe_to_postings(
     df: Any,
     *,
     profile: Profile | None,
+    search: PlannedSearch | None = None,
 ) -> list[RawPosting]:
     if df is None or getattr(df, "empty", True):
         return []
@@ -131,6 +133,9 @@ def _dataframe_to_postings(
                 url=url,
                 description_clean=description_s,
                 posted_at=_parse_posted_at(_row_value(row, "date_posted", "date")),
+                discovery_family=search.family_id if search else None,
+                discovery_bucket=search.bucket_id if search else None,
+                discovery_query=search.query if search else None,
             )
         )
     return out
@@ -145,7 +150,7 @@ def _google_search_term(_search: SearchConfig, term: str) -> str:
     return f"{term} internship"
 
 
-def _effective_windows(search: SearchConfig) -> dict[str, str]:
+def _effective_windows(search: SearchConfig, sites: list[str] | None = None) -> dict[str, str]:
     """How each site actually applies ``hours_old`` (JobSpy does not honor it uniformly)."""
     configured = f"{search.hours_old}h"
     notes = {
@@ -154,14 +159,15 @@ def _effective_windows(search: SearchConfig) -> dict[str, str]:
         "google": "hours_old ignored (no recency clause in the Google query)",
         "zip_recruiter": "hours_old rounded up to the next full day",
     }
-    return {site: notes.get(site, configured) for site in search.sites}
+    chosen = search.sites if sites is None else sites
+    return {site: notes.get(site, configured) for site in chosen}
 
 
-def _scrape_term(search: SearchConfig, term: str) -> Any:
+def _scrape_term(search: SearchConfig, term: str, sites: list[str]) -> Any:
     from jobspy import scrape_jobs
 
     kwargs: dict[str, Any] = dict(
-        site_name=list(search.sites),
+        site_name=list(sites),
         search_term=term,
         location=search.location,
         distance=search.distance,
@@ -172,7 +178,7 @@ def _scrape_term(search: SearchConfig, term: str) -> Any:
         linkedin_fetch_description=search.linkedin_fetch_description,
         verbose=0,
     )
-    if "google" in search.sites:
+    if "google" in sites:
         kwargs["google_search_term"] = _google_search_term(search, term)
     try:
         return scrape_jobs(**kwargs)
@@ -190,34 +196,49 @@ async def fetch_linkedin_indeed(
     targets: Targets,
     *,
     profile: Profile | None = None,
+    plan: DiscoveryPlan | None = None,
 ) -> list[RawPosting]:
-    """Fetch LinkedIn/Indeed postings for all configured search terms."""
+    """Fetch JobSpy postings for the discovery plan, once per selected query."""
     search = targets.search
+    if plan is None:
+        planned = tuple(
+            PlannedSearch(family_id="", bucket_id="", query=term) for term in search.terms
+        )
+        sites = list(search.sites)
+    else:
+        planned = plan.searches
+        sites = list(plan.jobspy_sites)
     all_postings: list[RawPosting] = []
     seen: set[tuple[str, str]] = set()
 
     log.warning(
         "jobspy_recency_windows",
         configured_hours_old=search.hours_old,
-        effective=_effective_windows(search),
+        effective=_effective_windows(search, sites),
     )
 
-    for term in search.terms:
-        log.info("jobspy_scrape_start", term=term, sites=search.sites)
+    for item in planned:
+        log.info(
+            "jobspy_scrape_start",
+            term=item.query,
+            family=item.family_id or None,
+            bucket=item.bucket_id or None,
+            sites=sites,
+        )
         try:
-            df = await asyncio.to_thread(_scrape_term, search, term)
+            df = await asyncio.to_thread(_scrape_term, search, item.query, sites)
         except Exception as exc:
-            log.warning("jobspy_scrape_failed", term=term, error=str(exc))
+            log.warning("jobspy_scrape_failed", term=item.query, error=str(exc))
             continue
 
-        batch = _dataframe_to_postings(df, profile=profile)
+        batch = _dataframe_to_postings(df, profile=profile, search=item)
         for posting in batch:
             key = (posting.source.value, posting.external_id)
             if key in seen:
                 continue
             seen.add(key)
             all_postings.append(posting)
-        log.info("jobspy_scrape_done", term=term, count=len(batch))
+        log.info("jobspy_scrape_done", term=item.query, count=len(batch))
 
     log.info("jobspy_total", count=len(all_postings))
     return all_postings

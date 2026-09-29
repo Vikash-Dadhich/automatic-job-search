@@ -10,6 +10,7 @@ import structlog
 from config.profile import Profile, load_profile
 from config.targets import Targets, load_targets
 from core.db import Status, init_db, session_scope, upsert_job
+from scraper.discovery import build_discovery_plan, log_discovery_plan
 from scraper.filters import evaluate
 from scraper.linkedin_jobspy import fetch_linkedin_indeed
 from scraper.models import RawPosting, to_job
@@ -46,33 +47,44 @@ async def run_ingestion(
     profile: Profile | None = None,
     include_jobspy: bool = True,
     include_workday: bool = True,
+    search_capacity: int | None = None,
 ) -> IngestSummary:
-    """Run one full discovery cycle and persist results."""
+    """Run one full discovery cycle and persist results.
+
+    ``search_capacity`` is how many query executions to run. ``None`` runs every
+    enabled discovery query once. Allocation does not look at fit scores.
+    """
     await init_db()
     targets = targets or load_targets()
     profile = profile or load_profile()
     summary = IngestSummary()
+    plan = build_discovery_plan(targets, capacity=search_capacity)
+    log_discovery_plan(plan)
+    provenance = {
+        search.query: (search.family_id, search.bucket_id) for search in plan.searches
+    }
 
     tasks: list[asyncio.Task[list[RawPosting]]] = []
     labels: list[str] = []
 
-    if include_jobspy and targets.search.terms:
+    if include_jobspy and plan.jobspy_sites and plan.searches:
         tasks.append(
             asyncio.create_task(
-                fetch_linkedin_indeed(targets, profile=profile),
+                fetch_linkedin_indeed(targets, profile=profile, plan=plan),
                 name="jobspy",
             )
         )
         labels.append("jobspy")
 
     active_tenants = targets.active_workday_tenants()
-    if include_workday and active_tenants:
+    if include_workday and plan.workday_enabled and active_tenants and plan.searches:
         tasks.append(
             asyncio.create_task(
                 fetch_all_workday(
                     active_tenants,
-                    default_search_terms=targets.search.terms,
+                    default_search_terms=[search.query for search in plan.searches],
                     hours_old=targets.search.hours_old,
+                    provenance=provenance,
                 ),
                 name="workday",
             )

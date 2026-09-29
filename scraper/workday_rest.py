@@ -215,6 +215,7 @@ async def fetch_workday(
     search_terms: list[str] | None = None,
     hours_old: int = 24,
     max_pages: int = 25,
+    provenance: dict[str, tuple[str, str]] | None = None,
 ) -> list[RawPosting]:
     """Fetch recent postings from a single Workday tenant."""
     if tenant.is_placeholder:
@@ -353,6 +354,10 @@ async def fetch_workday(
                         ):
                             description_html = str(description_html)
 
+                        family_id = None
+                        bucket_id = None
+                        if provenance and term in provenance:
+                            family_id, bucket_id = provenance[term]
                         postings.append(
                             RawPosting(
                                 source=Source.workday,
@@ -364,6 +369,9 @@ async def fetch_workday(
                                 description_html=description_html,
                                 posted_at=start,
                                 tenant=parts.tenant,
+                                discovery_family=family_id,
+                                discovery_bucket=bucket_id,
+                                discovery_query=term or None,
                             )
                         )
                     if detail_blocked and blocks >= max_blocks:
@@ -391,6 +399,7 @@ async def fetch_all_workday(
     *,
     default_search_terms: list[str] | None = None,
     hours_old: int = 24,
+    provenance: dict[str, tuple[str, str]] | None = None,
 ) -> list[RawPosting]:
     """Fetch from many tenants concurrently; failures are isolated."""
     if not tenants:
@@ -400,7 +409,10 @@ async def fetch_all_workday(
         terms = tenant.search_terms or default_search_terms
         try:
             return await fetch_workday(
-                tenant, search_terms=terms, hours_old=hours_old
+                tenant,
+                search_terms=terms,
+                hours_old=hours_old,
+                provenance=provenance,
             )
         except Exception as exc:
             log.warning("workday_tenant_failed", name=tenant.name, error=str(exc))

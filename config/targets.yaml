@@ -1,26 +1,9 @@
 # Discovery targets for LinkedIn/Indeed (JobSpy) and Workday CXS tenants.
-# Search terms cover 8 internship role families; all feed the same title filter
-# (intern/summer/new-grad positive signals + seniority block in filters.py).
+# Search phrases live in config/discovery.yaml (role family, bucket, query).
+# load_targets() copies the enabled queries onto search.terms for callers that
+# still read the flat list. Sites, location, and Workday boards stay here.
 
 search:
-  terms:
-    # -- Product Management --
-    - "Product Manager Intern"
-    - "MBA Product Manager Intern"
-    # -- Program & Project Management --
-    - "Program Manager Intern"
-    - "Project Manager Intern"
-    # -- Product Marketing --
-    - "Product Marketing Intern"
-    # -- Strategy & GTM --
-    - "Strategy Intern"
-    - "Go-to-Market Intern"
-    # -- Product Operations --
-    - "Product Operations Intern"
-    # -- Customer Success --
-    - "Customer Success Intern"
-    # -- Consulting --
-    - "Management Consultant Intern"
   sites:
     - linkedin
     - indeed

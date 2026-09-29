@@ -31,7 +31,7 @@ Left unchanged on purpose, because the Phase 0 brief did not establish them as f
 
 ## Discovery baseline
 
-Unchanged.
+Phase 0 recorded the flat ten-term list below. Phase 1 kept those terms and moved them under role families in `config/discovery.yaml`. Sites, Workday boards, and `INTERNSHIP_ONLY` are unchanged. See `docs/phase1-discovery-architecture.md`.
 
 - JobSpy sites: LinkedIn, Indeed, Google, ZipRecruiter.
 - Search terms: Product Manager Intern, MBA Product Manager Intern, Program Manager Intern, Project Manager Intern, Product Marketing Intern, Strategy Intern, Go-to-Market Intern, Product Operations Intern, Customer Success Intern, Management Consultant Intern.

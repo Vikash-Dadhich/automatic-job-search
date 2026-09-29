@@ -84,7 +84,7 @@ def parse_workday_url(url: str) -> WorkdayParts:
 
 
 class SearchConfig(BaseModel):
-    terms: list[str] = Field(min_length=1)
+    terms: list[str] = Field(default_factory=list)
     sites: list[str] = Field(default_factory=lambda: ["linkedin", "indeed"])
     location: str = "United States"
     distance: int = 50
@@ -108,10 +108,7 @@ class SearchConfig(BaseModel):
     @field_validator("terms")
     @classmethod
     def validate_terms(cls, value: list[str]) -> list[str]:
-        cleaned = [t.strip() for t in value if t and t.strip()]
-        if not cleaned:
-            raise ValueError("search.terms must contain at least one non-empty term")
-        return cleaned
+        return [t.strip() for t in value if t and t.strip()]
 
 
 class WorkdayTenant(BaseModel):
@@ -168,7 +165,14 @@ def load_targets(path: str | None = None) -> Targets:
     """Load and validate targets.yaml. Cached after first successful load."""
     targets_path = Path(path) if path else TARGETS_PATH
     raw = _load_yaml(targets_path)
-    return Targets.model_validate(raw)
+    targets = Targets.model_validate(raw)
+    from scraper.discovery import enabled_query_texts
+
+    terms = enabled_query_texts()
+    if not terms:
+        raise ValueError("discovery config has no enabled queries")
+    targets.search.terms = terms
+    return targets
 
 
 def reload_targets(path: str | None = None) -> Targets:

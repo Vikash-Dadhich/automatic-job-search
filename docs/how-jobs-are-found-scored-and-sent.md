@@ -53,9 +53,11 @@ Discovery is not a logged-in LinkedIn session. `ENABLE_LINKEDIN_SCRAPE` is a dif
 
 Job posts come from the `python-jobspy` library, one search term at a time, across every site listed in `config/targets.yaml`. Workday company boards are a second fetcher, described in section 2.4.
 
-### 2.1 Search terms (all equal today)
+### 2.1 Search terms
 
-Every term is searched the same way. Nothing is weighted.
+Phase 1 moved the phrase list into `config/discovery.yaml`. Families, buckets, and a 40/40/15/5 search-capacity split live there. Those weights are discovery priority, not fit scores. The ten phrases below are still searched. One starter phrase was added for each bucket that did not already have one. See `docs/phase1-discovery-architecture.md`.
+
+Every selected query is still searched once, the same way, on the sites in `config/targets.yaml`.
 
 Product management:
 
@@ -88,7 +90,7 @@ Consulting:
 
 - Management Consultant Intern
 
-That is 10 terms.
+That was the original 10 terms. They are still in the discovery config, under role-family buckets.
 
 ### 2.2 Sites and the exact JobSpy arguments
 
@@ -638,6 +640,8 @@ Search share has a ceiling. LinkedIn rate-limits a single IP, and a term often h
 | Piece | File |
 |---|---|
 | Search terms, sites, 50 results, 36 hours, Workday boards | `config/targets.yaml` |
+| Role families, buckets, queries, search capacity | `config/discovery.yaml`, `scraper/discovery.py` |
+| Phase 1 discovery architecture | `docs/phase1-discovery-architecture.md` |
 | JobSpy call, Google query, per-site window log | `scraper/linkedin_jobspy.py` |
 | Fetch, clean, filter, save | `scraper/ingest.py` |
 | Hard filters and sponsorship classifier | `scraper/filters.py` |

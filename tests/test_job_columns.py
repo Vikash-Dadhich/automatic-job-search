@@ -31,6 +31,9 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "vector_score",
         "vector_profile_hash",
         "embedding_model",
+        "discovery_family",
+        "discovery_bucket",
+        "discovery_query",
     } <= names
 
     await init_db()

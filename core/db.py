@@ -94,6 +94,9 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "vector_profile_hash": "VARCHAR(64)",
         "vector_decision": "VARCHAR(16)",
         "embedding_model": "VARCHAR(64)",
+        "discovery_family": "VARCHAR(64)",
+        "discovery_bucket": "VARCHAR(64)",
+        "discovery_query": "VARCHAR(256)",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -105,6 +108,9 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "vector_profile_hash": "VARCHAR(64)",
         "vector_decision": "VARCHAR(16)",
         "embedding_model": "VARCHAR(64)",
+        "discovery_family": "VARCHAR(64)",
+        "discovery_bucket": "VARCHAR(64)",
+        "discovery_query": "VARCHAR(256)",
     },
 }
 
@@ -163,6 +169,10 @@ class Job(SQLModel, table=True):
     vector_profile_hash: str | None = Field(default=None, max_length=64)
     vector_decision: str | None = Field(default=None, max_length=16)
     embedding_model: str | None = Field(default=None, max_length=64)
+    # How the posting entered discovery. Independent of the fit score.
+    discovery_family: str | None = Field(default=None, max_length=64)
+    discovery_bucket: str | None = Field(default=None, max_length=64)
+    discovery_query: str | None = Field(default=None, max_length=256)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -514,6 +524,12 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.tenant = job.tenant
     if job.posted_at is not None:
         existing.posted_at = job.posted_at
+    if job.discovery_family is not None:
+        existing.discovery_family = job.discovery_family
+    if job.discovery_bucket is not None:
+        existing.discovery_bucket = job.discovery_bucket
+    if job.discovery_query is not None:
+        existing.discovery_query = job.discovery_query
     if content_changed:
         existing.embedding = None
         existing.vector_score = None

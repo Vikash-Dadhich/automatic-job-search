@@ -24,6 +24,9 @@ class RawPosting(BaseModel):
     description_clean: str | None = None
     posted_at: datetime | None = None
     tenant: str | None = None
+    discovery_family: str | None = None
+    discovery_bucket: str | None = None
+    discovery_query: str | None = None
 
     def ensure_clean_description(self) -> str:
         """Populate description_clean from HTML or existing text; return the value."""
@@ -72,4 +75,7 @@ def to_job(
         posted_at=posting.posted_at,
         status=status,
         justification=justification,
+        discovery_family=posting.discovery_family,
+        discovery_bucket=posting.discovery_bucket,
+        discovery_query=posting.discovery_query,
     )
