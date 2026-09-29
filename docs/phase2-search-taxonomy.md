@@ -31,3 +31,5 @@ Generic titles were not added: MBA intern, business intern, marketing intern, so
 | Project Manager Intern | Project management | Same pattern. Sales operations, revenue operations, and commercial operations were left out. |
 
 Strategy and operations lives under business strategy, not under Other. The MBA wording is there too, and the generic wording remains.
+
+What those phrases actually return is measured in `docs/phase3-discovery-coverage.md`. That measurement does not change this vocabulary.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 
 import structlog
@@ -10,7 +11,15 @@ import structlog
 from config.profile import Profile, load_profile
 from config.targets import Targets, load_targets
 from core.db import Status, init_db, session_scope, upsert_job
-from scraper.discovery import build_discovery_plan, log_discovery_plan
+from scraper.coverage import (
+    CoverageReport,
+    SearchObservation,
+    build_coverage_report,
+    fail_unrecorded,
+    log_coverage,
+    write_coverage,
+)
+from scraper.discovery import DiscoveryPlan, build_discovery_plan, log_discovery_plan
 from scraper.filters import evaluate
 from scraper.linkedin_jobspy import fetch_linkedin_indeed
 from scraper.models import RawPosting, to_job
@@ -27,6 +36,54 @@ class IngestSummary:
     upserted: int = 0
     by_source: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    coverage: CoverageReport | None = None
+
+
+def _attach_coverage(
+    summary: IngestSummary,
+    plan: DiscoveryPlan,
+    jobspy_observations: list[SearchObservation],
+    workday_observations: list[SearchObservation],
+    tenants: tuple[str, ...],
+) -> None:
+    try:
+        summary.coverage = build_coverage_report(
+            plan,
+            [*jobspy_observations, *workday_observations],
+            workday_tenants=tenants,
+        )
+        log_coverage(summary.coverage)
+        if os.environ.get("PYTEST_CURRENT_TEST") is None:
+            write_coverage(summary.coverage)
+    except Exception as exc:
+        log.warning("discovery_coverage_failed", error=str(exc)[:200])
+
+
+def _mark_source_failed(
+    plan: DiscoveryPlan,
+    label: str,
+    error: str,
+    jobspy_observations: list[SearchObservation],
+    workday_observations: list[SearchObservation],
+    tenants: tuple[str, ...],
+) -> None:
+    if label == "jobspy":
+        fail_unrecorded(
+            plan,
+            jobspy_observations,
+            sources=plan.jobspy_sites,
+            detail="",
+            error=error,
+        )
+        return
+    for tenant in tenants:
+        fail_unrecorded(
+            plan,
+            workday_observations,
+            sources=("workday",),
+            detail=tenant,
+            error=error,
+        )
 
 
 def _dedupe(postings: list[RawPosting]) -> list[RawPosting]:
@@ -63,6 +120,8 @@ async def run_ingestion(
     provenance = {
         search.query: (search.family_id, search.bucket_id) for search in plan.searches
     }
+    jobspy_observations: list[SearchObservation] = []
+    workday_observations: list[SearchObservation] = []
 
     tasks: list[asyncio.Task[list[RawPosting]]] = []
     labels: list[str] = []
@@ -70,7 +129,12 @@ async def run_ingestion(
     if include_jobspy and plan.jobspy_sites and plan.searches:
         tasks.append(
             asyncio.create_task(
-                fetch_linkedin_indeed(targets, profile=profile, plan=plan),
+                fetch_linkedin_indeed(
+                    targets,
+                    profile=profile,
+                    plan=plan,
+                    observations=jobspy_observations,
+                ),
                 name="jobspy",
             )
         )
@@ -85,6 +149,7 @@ async def run_ingestion(
                     default_search_terms=[search.query for search in plan.searches],
                     hours_old=targets.search.hours_old,
                     provenance=provenance,
+                    observations=workday_observations,
                 ),
                 name="workday",
             )
@@ -100,6 +165,7 @@ async def run_ingestion(
             search_terms=len(targets.search.terms),
             active_workday=len(active_tenants),
         )
+        _attach_coverage(summary, plan, jobspy_observations, workday_observations, ())
         return summary
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -109,6 +175,14 @@ async def run_ingestion(
             msg = f"{label}: {result}"
             summary.errors.append(msg)
             log.warning("ingestion_source_failed", source=label, error=str(result))
+            _mark_source_failed(
+                plan,
+                label,
+                str(result)[:200],
+                jobspy_observations,
+                workday_observations,
+                tuple(tenant.name for tenant in active_tenants),
+            )
             continue
         raw.extend(result)
         summary.by_source[label] = len(result)
@@ -136,6 +210,9 @@ async def run_ingestion(
 
             await upsert_job(session, job)
             summary.upserted += 1
+
+    tenants = tuple(tenant.name for tenant in active_tenants) if include_workday else ()
+    _attach_coverage(summary, plan, jobspy_observations, workday_observations, tenants)
 
     log.info(
         "ingestion_complete",

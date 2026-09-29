@@ -13,6 +13,7 @@ import structlog
 from config.profile import Profile
 from config.targets import SearchConfig, Targets
 from core.db import Source
+from scraper.coverage import SearchObservation, observe_search, result_identity
 from scraper.discovery import DiscoveryPlan, PlannedSearch
 from scraper.filters import location_acceptable
 from scraper.models import RawPosting
@@ -192,11 +193,43 @@ def _scrape_term(search: SearchConfig, term: str, sites: list[str]) -> Any:
         return scrape_jobs(**kwargs)
 
 
+def _jobspy_observations(
+    item: PlannedSearch,
+    sites: list[str],
+    batch: list[RawPosting],
+    *,
+    error: str | None = None,
+) -> list[SearchObservation]:
+    by_site: dict[str, list[RawPosting]] = {site: [] for site in sites}
+    for posting in batch:
+        by_site.setdefault(posting.source.value, []).append(posting)
+    notes: list[SearchObservation] = []
+    ordered = list(sites) + [site for site in by_site if site not in sites]
+    for site in ordered:
+        rows = by_site.get(site, [])
+        hits = tuple(
+            result_identity(row.source.value, row.external_id) for row in rows
+        )
+        notes.append(
+            observe_search(
+                family_id=item.family_id,
+                bucket_id=item.bucket_id,
+                query=item.query,
+                source=site,
+                hits=() if error else hits,
+                error=error,
+                failed=error is not None,
+            )
+        )
+    return notes
+
+
 async def fetch_linkedin_indeed(
     targets: Targets,
     *,
     profile: Profile | None = None,
     plan: DiscoveryPlan | None = None,
+    observations: list[SearchObservation] | None = None,
 ) -> list[RawPosting]:
     """Fetch JobSpy postings for the discovery plan, once per selected query."""
     search = targets.search
@@ -229,9 +262,15 @@ async def fetch_linkedin_indeed(
             df = await asyncio.to_thread(_scrape_term, search, item.query, sites)
         except Exception as exc:
             log.warning("jobspy_scrape_failed", term=item.query, error=str(exc))
+            if observations is not None:
+                observations.extend(
+                    _jobspy_observations(item, sites, [], error=str(exc)[:200])
+                )
             continue
 
         batch = _dataframe_to_postings(df, profile=profile, search=item)
+        if observations is not None:
+            observations.extend(_jobspy_observations(item, sites, batch))
         for posting in batch:
             key = (posting.source.value, posting.external_id)
             if key in seen:

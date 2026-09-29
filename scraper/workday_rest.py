@@ -18,6 +18,7 @@ from tenacity import (
 
 from config.targets import WorkdayParts, WorkdayTenant
 from core.db import Source
+from scraper.coverage import SearchObservation, observe_search, result_identity
 from scraper.models import RawPosting
 
 log = structlog.get_logger(__name__)
@@ -209,6 +210,29 @@ def _company_name(tenant: WorkdayTenant, info: dict[str, Any] | None) -> str:
     return tenant.name
 
 
+def _workday_observation(
+    tenant: WorkdayTenant,
+    term: str,
+    hits: tuple[str | None, ...],
+    *,
+    provenance: dict[str, tuple[str, str]] | None,
+    error: str | None = None,
+) -> SearchObservation:
+    family_id, bucket_id = ("", "")
+    if provenance and term in provenance:
+        family_id, bucket_id = provenance[term]
+    return observe_search(
+        family_id=family_id,
+        bucket_id=bucket_id,
+        query=term,
+        source="workday",
+        hits=() if error else hits,
+        error=error,
+        detail=tenant.name,
+        failed=error is not None,
+    )
+
+
 async def fetch_workday(
     tenant: WorkdayTenant,
     *,
@@ -216,8 +240,14 @@ async def fetch_workday(
     hours_old: int = 24,
     max_pages: int = 25,
     provenance: dict[str, tuple[str, str]] | None = None,
+    observations: list[SearchObservation] | None = None,
 ) -> list[RawPosting]:
     """Fetch recent postings from a single Workday tenant."""
+    terms = search_terms or tenant.search_terms or [""]
+    cleaned_terms = [t.strip() for t in terms if t and t.strip()]
+    if not cleaned_terms:
+        cleaned_terms = [""]
+
     if tenant.is_placeholder:
         log.info("workday_skip_placeholder", name=tenant.name)
         return []
@@ -226,13 +256,20 @@ async def fetch_workday(
         parts = tenant.parsed()
     except ValueError as exc:
         log.warning("workday_bad_url", name=tenant.name, error=str(exc))
+        if observations is not None:
+            for term in cleaned_terms:
+                if not term:
+                    continue
+                observations.append(
+                    _workday_observation(
+                        tenant,
+                        term,
+                        (),
+                        provenance=provenance,
+                        error=str(exc)[:200],
+                    )
+                )
         return []
-
-    terms = search_terms or tenant.search_terms or [""]
-    # Deduplicate empty + real terms: run once with "" if no specific terms
-    cleaned_terms = [t.strip() for t in terms if t and t.strip()]
-    if not cleaned_terms:
-        cleaned_terms = [""]
 
     postings: list[RawPosting] = []
     seen_ids: set[str] = set()
@@ -246,10 +283,24 @@ async def fetch_workday(
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             for term in cleaned_terms:
+                if not term:
+                    continue
                 if blocks >= max_blocks:
-                    break
+                    if observations is not None:
+                        observations.append(
+                            _workday_observation(
+                                tenant,
+                                term,
+                                (),
+                                provenance=provenance,
+                                error="workday blocked",
+                            )
+                        )
+                    continue
                 offset = 0
                 pages = 0
+                term_hits: list[str | None] = []
+                term_error: str | None = None
                 while pages < max_pages:
                     try:
                         data = await _fetch_listing_page(
@@ -257,6 +308,7 @@ async def fetch_workday(
                         )
                     except WorkdayBlockedError as exc:
                         blocks += 1
+                        term_error = str(exc)[:200]
                         log.warning(
                             "workday_blocked",
                             tenant=parts.tenant,
@@ -266,6 +318,7 @@ async def fetch_workday(
                         )
                         break
                     except (httpx.HTTPError, ValueError) as exc:
+                        term_error = str(exc)[:200]
                         log.warning(
                             "workday_list_error",
                             tenant=parts.tenant,
@@ -358,6 +411,8 @@ async def fetch_workday(
                         bucket_id = None
                         if provenance and term in provenance:
                             family_id, bucket_id = provenance[term]
+                        identity = result_identity(Source.workday.value, external_id)
+                        term_hits.append(identity)
                         postings.append(
                             RawPosting(
                                 source=Source.workday,
@@ -381,6 +436,17 @@ async def fetch_workday(
                     if offset >= total:
                         break
                     await asyncio.sleep(0.25)
+                if observations is not None:
+                    failed = term_error if term_error and not term_hits else None
+                    observations.append(
+                        _workday_observation(
+                            tenant,
+                            term,
+                            tuple(term_hits),
+                            provenance=provenance,
+                            error=failed,
+                        )
+                    )
     except WorkdayBlockedError as exc:
         log.warning("workday_blocked", tenant=parts.tenant, error=str(exc))
         return postings
@@ -400,22 +466,38 @@ async def fetch_all_workday(
     default_search_terms: list[str] | None = None,
     hours_old: int = 24,
     provenance: dict[str, tuple[str, str]] | None = None,
+    observations: list[SearchObservation] | None = None,
 ) -> list[RawPosting]:
     """Fetch from many tenants concurrently; failures are isolated."""
     if not tenants:
         return []
 
     async def _one(tenant: WorkdayTenant) -> list[RawPosting]:
-        terms = tenant.search_terms or default_search_terms
+        terms = tenant.search_terms or default_search_terms or []
+        before = len(observations) if observations is not None else 0
         try:
             return await fetch_workday(
                 tenant,
                 search_terms=terms,
                 hours_old=hours_old,
                 provenance=provenance,
+                observations=observations,
             )
         except Exception as exc:
             log.warning("workday_tenant_failed", name=tenant.name, error=str(exc))
+            if observations is not None:
+                recorded = {item.query for item in observations[before:]}
+                for term in terms:
+                    if term and term not in recorded:
+                        observations.append(
+                            _workday_observation(
+                                tenant,
+                                term,
+                                (),
+                                provenance=provenance,
+                                error=str(exc)[:200],
+                            )
+                        )
             return []
 
     results = await asyncio.gather(*[_one(t) for t in tenants])
