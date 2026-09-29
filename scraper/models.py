@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from core.db import Job, Source, Status
-from scraper.textclean import content_hash, extract_sections, html_to_text
+from scraper.textclean import content_hash, normalize_description
 
 
 class RawPosting(BaseModel):
@@ -27,17 +27,24 @@ class RawPosting(BaseModel):
     discovery_family: str | None = None
     discovery_bucket: str | None = None
     discovery_query: str | None = None
+    jd_status: str | None = None
+    jd_char_count: int | None = None
+    jd_truncated: bool | None = None
+    jd_extraction_path: str | None = None
 
     def ensure_clean_description(self) -> str:
-        """Populate description_clean from HTML or existing text; return the value."""
+        """Normalize the best available JD and record extraction quality."""
         if self.description_clean and self.description_clean.strip():
-            self.description_clean = extract_sections(self.description_clean)
-            return self.description_clean
-        if self.description_html:
-            text = html_to_text(self.description_html)
-            self.description_clean = extract_sections(text)
-            return self.description_clean
-        self.description_clean = ""
+            normalized = normalize_description(self.description_clean, from_html=False)
+        elif self.description_html:
+            normalized = normalize_description(self.description_html, from_html=True)
+        else:
+            normalized = normalize_description("", from_html=False)
+        self.description_clean = normalized.text
+        self.jd_status = normalized.status.value
+        self.jd_char_count = normalized.char_count
+        self.jd_truncated = normalized.truncated
+        self.jd_extraction_path = normalized.extraction_path
         return self.description_clean
 
 
@@ -78,4 +85,8 @@ def to_job(
         discovery_family=posting.discovery_family,
         discovery_bucket=posting.discovery_bucket,
         discovery_query=posting.discovery_query,
+        jd_status=posting.jd_status,
+        jd_char_count=posting.jd_char_count,
+        jd_truncated=posting.jd_truncated,
+        jd_extraction_path=posting.jd_extraction_path,
     )

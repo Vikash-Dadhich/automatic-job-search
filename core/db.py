@@ -97,6 +97,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "discovery_family": "VARCHAR(64)",
         "discovery_bucket": "VARCHAR(64)",
         "discovery_query": "VARCHAR(256)",
+        "jd_status": "VARCHAR(16)",
+        "jd_char_count": "INTEGER",
+        "jd_truncated": "INTEGER",
+        "jd_extraction_path": "VARCHAR(32)",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -111,6 +115,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "discovery_family": "VARCHAR(64)",
         "discovery_bucket": "VARCHAR(64)",
         "discovery_query": "VARCHAR(256)",
+        "jd_status": "VARCHAR(16)",
+        "jd_char_count": "INTEGER",
+        "jd_truncated": "BOOLEAN",
+        "jd_extraction_path": "VARCHAR(32)",
     },
 }
 
@@ -173,6 +181,11 @@ class Job(SQLModel, table=True):
     discovery_family: str | None = Field(default=None, max_length=64)
     discovery_bucket: str | None = Field(default=None, max_length=64)
     discovery_query: str | None = Field(default=None, max_length=256)
+    # Description extraction quality. Separate from discovery provenance and fit.
+    jd_status: str | None = Field(default=None, max_length=16)
+    jd_char_count: int | None = Field(default=None)
+    jd_truncated: bool | None = Field(default=None)
+    jd_extraction_path: str | None = Field(default=None, max_length=32)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -483,6 +496,28 @@ async def _ensure_job_columns(conn: Any) -> None:
 _RESCORABLE_STATUSES = frozenset({Status.scored, Status.staged})
 
 
+def _incoming_description_unusable(job: Job) -> bool:
+    """Missing or suspiciously short text. A real rewrite is still usable."""
+    if job.jd_status in {"missing", "suspicious"}:
+        return True
+    if job.jd_status is None and not (job.description_clean or "").strip():
+        return True
+    return False
+
+
+def _stored_description_usable(job: Job) -> bool:
+    if job.jd_status in {"present", "truncated"}:
+        return True
+    if job.jd_status is None:
+        return len((job.description_clean or "").strip()) >= 80
+    return False
+
+
+def _keep_stored_description(existing: Job, incoming: Job) -> bool:
+    """Do not replace a usable JD with an empty or too-short refetch."""
+    return _incoming_description_unusable(incoming) and _stored_description_usable(existing)
+
+
 async def upsert_job(session: AsyncSession, job: Job) -> Job:
     """Insert a job or update mutable fields when (source, external_id) already exists.
 
@@ -516,10 +551,22 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
     existing.company = job.company
     existing.location = job.location
     existing.url = job.url
-    if job.description_clean is not None:
-        existing.description_clean = job.description_clean
-    if job.content_hash is not None:
-        existing.content_hash = job.content_hash
+    keep_existing_jd = _keep_stored_description(existing, job)
+    if keep_existing_jd:
+        content_changed = False
+    else:
+        if job.description_clean is not None:
+            existing.description_clean = job.description_clean
+        if job.content_hash is not None:
+            existing.content_hash = job.content_hash
+        if job.jd_status is not None:
+            existing.jd_status = job.jd_status
+        if job.jd_char_count is not None:
+            existing.jd_char_count = job.jd_char_count
+        if job.jd_truncated is not None:
+            existing.jd_truncated = job.jd_truncated
+        if job.jd_extraction_path is not None:
+            existing.jd_extraction_path = job.jd_extraction_path
     if job.tenant is not None:
         existing.tenant = job.tenant
     if job.posted_at is not None:
