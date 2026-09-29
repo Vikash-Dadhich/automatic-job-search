@@ -109,6 +109,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_content_hash": "VARCHAR(64)",
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
+        "company_intelligence_id": "INTEGER",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -143,6 +144,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_content_hash": "VARCHAR(64)",
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
+        "company_intelligence_id": "INTEGER",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -170,6 +172,36 @@ class SkillProvenance(StrEnum):
 class SkillPlacement(StrEnum):
     skills = "skills"
     experience = "experience"
+
+
+class CompanyIntelligence(SQLModel, table=True):
+    """Factual employer record shared by jobs. Not a score and not a preference."""
+
+    __tablename__: ClassVar[str] = "company_intelligence"
+
+    id: int | None = Field(default=None, primary_key=True)
+    lookup_key: str = Field(max_length=512, unique=True, index=True)
+    company_name: str = Field(max_length=512)
+    canonical_name: str = Field(max_length=512)
+    website: str | None = Field(default=None, max_length=2048)
+    industry: str | None = Field(default=None, max_length=128)
+    company_type: str | None = Field(default=None, max_length=64)
+    public_private: str | None = Field(default=None, max_length=16)
+    headquarters: str | None = Field(default=None, max_length=256)
+    employee_range: str | None = Field(default=None, max_length=128)
+    founded_year: int | None = Field(default=None)
+    parent_company: str | None = Field(default=None, max_length=512)
+    business_description: str | None = Field(default=None)
+    sources: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSON, nullable=False),
+    )
+    confidence: str | None = Field(default=None, max_length=16)
+    status: str = Field(default="unresolved", max_length=16, index=True)
+    intelligence_version: str = Field(default="phase8-v1", max_length=32)
+    retrieved_at: datetime | None = _tz_datetime(nullable=True)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+    updated_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
 class Job(SQLModel, table=True):
@@ -228,6 +260,12 @@ class Job(SQLModel, table=True):
     # Portfolio importance of role_family. Not a fit score and not search capacity.
     role_family_weight: int | None = Field(default=None)
     role_family_weight_version: str | None = Field(default=None, max_length=32)
+    # Factual employer record. Does not change fit, weight, tier, or status.
+    company_intelligence_id: int | None = Field(
+        default=None,
+        foreign_key="company_intelligence.id",
+        index=True,
+    )
     # Candidate-to-JD fit. `score` stays the compatibility value when fit is available.
     fit_confidence: str | None = Field(default=None, max_length=16)
     fit_strengths: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))

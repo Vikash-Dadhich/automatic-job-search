@@ -12,6 +12,7 @@ from config.profile import Profile, load_profile
 from config.targets import Targets, load_targets
 from core.db import Job, Status, get_job_by_source_id, init_db, session_scope, upsert_job
 from scorer.clients import LLMClient
+from scorer.company_intelligence import attach_company_intelligence
 from scraper.coverage import (
     CoverageReport,
     SearchObservation,
@@ -267,8 +268,16 @@ async def run_ingestion(
                 summary.filtered_out += 1
 
             await _apply_role_classification(session, job, role_client)
-            await upsert_job(session, job)
+            saved = await upsert_job(session, job)
             summary.upserted += 1
+            try:
+                await attach_company_intelligence(session, saved)
+            except Exception as exc:
+                log.warning(
+                    "company_intelligence_provider_failure",
+                    company=saved.company,
+                    error=str(exc)[:200],
+                )
 
     tenants = tuple(tenant.name for tenant in active_tenants) if include_workday else ()
     _attach_coverage(summary, plan, jobspy_observations, workday_observations, tenants)
