@@ -44,6 +44,8 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "role_evidence",
         "role_classifier_version",
         "role_content_hash",
+        "role_family_weight",
+        "role_family_weight_version",
         "fit_confidence",
         "fit_strengths",
         "fit_gaps",

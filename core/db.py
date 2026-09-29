@@ -107,6 +107,8 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "role_family_weight": "INTEGER",
+        "role_family_weight_version": "VARCHAR(32)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -139,6 +141,8 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "role_family_weight": "INTEGER",
+        "role_family_weight_version": "VARCHAR(32)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -221,6 +225,9 @@ class Job(SQLModel, table=True):
     role_evidence: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     role_classifier_version: str | None = Field(default=None, max_length=32)
     role_content_hash: str | None = Field(default=None, max_length=64)
+    # Portfolio importance of role_family. Not a fit score and not search capacity.
+    role_family_weight: int | None = Field(default=None)
+    role_family_weight_version: str | None = Field(default=None, max_length=32)
     # Candidate-to-JD fit. `score` stays the compatibility value when fit is available.
     fit_confidence: str | None = Field(default=None, max_length=16)
     fit_strengths: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -560,6 +567,14 @@ def _stored_description_usable(job: Job) -> bool:
     return False
 
 
+def _stamp_role_family_weight(job: Job) -> None:
+    """Set the portfolio weight from the classified family. Fit and status stay put."""
+    from scorer.role_weights import ROLE_WEIGHT_VERSION, get_role_family_weight
+
+    job.role_family_weight = get_role_family_weight(job.role_family)
+    job.role_family_weight_version = ROLE_WEIGHT_VERSION
+
+
 def _role_classification_current(job: Job) -> bool:
     from scorer.role_classify import classification_is_current
 
@@ -594,6 +609,7 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
     if existing is None:
         job.created_at = now
         job.updated_at = now
+        _stamp_role_family_weight(job)
         session.add(job)
         await session.flush()
         await session.refresh(job)
@@ -665,6 +681,7 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.role_evidence = job.role_evidence
         existing.role_classifier_version = job.role_classifier_version
         existing.role_content_hash = job.role_content_hash or existing.content_hash
+    _stamp_role_family_weight(existing)
     if existing.status in {Status.discovered, Status.filtered_out}:
         existing.status = job.status
         if job.justification is not None:

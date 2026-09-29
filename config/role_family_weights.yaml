@@ -1,0 +1,15 @@
+# Portfolio importance of a classified role family.
+# This is not discovery capacity and not a fit score.
+# PM + consulting + strategy + the broad other bucket = 100.
+# Product marketing, program/project/operations, OTHER, and UNKNOWN
+# each sit in that broad other bucket, so each stored weight is 5.
+
+version: phase7-v1
+weights:
+  PRODUCT_MANAGEMENT: 40
+  CONSULTING: 40
+  STRATEGY_TRANSFORMATION: 15
+  PRODUCT_MARKETING: 5
+  PROGRAM_PROJECT_OPERATIONS: 5
+  OTHER: 5
+  UNKNOWN: 5
