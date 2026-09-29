@@ -20,7 +20,7 @@ Status is `complete`, `partial`, `unresolved`, or `failed`. Confidence is `high`
 
 A fact is stored only when a pattern in the retrieved text states it. A provider may also return extra claims. Those claims are ignored. The service does not use an LLM as the source of company facts, and it does not use the candidate profile.
 
-Each stored source has a type, a URL, and a retrieved time. Types are `official_website`, `careers`, `sec`, `regulatory`, and `other`. The caller supplies the URL. The HTTP adapter performs one GET of that URL, with a short timeout and no crawl. It does not invent a domain from the company name, and it does not treat the job description or the job's location as company facts. A Workday posting URL is not fetched as a company profile.
+Each stored source has a type, a URL, and a retrieved time. Types are `official_website`, `careers`, `sec`, `regulatory`, and `other`. The caller supplies the URL. Ingestion uses a company website only when the source row already included one. A job posting URL, a Workday link, and a guessed domain are not company sources. The HTTP adapter performs one GET of that URL, with a short timeout and no crawl. A later source is added to the list. An earlier URL is kept, and the same URL is not stored twice.
 
 If no reliable URL is available, the row is `unresolved` and every fact stays null. If the request times out, errors, or returns nothing usable, the row is `failed` when nothing trustworthy was stored yet. A failure on a later refresh keeps facts that were already stored. Either way the job remains usable, and scoring still runs.
 

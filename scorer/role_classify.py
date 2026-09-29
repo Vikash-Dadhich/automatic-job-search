@@ -406,10 +406,16 @@ async def classify_role(
     discovery_query: str | None = None,
     client: LLMClient | None = None,
     model: str | None = None,
+    truncated: bool = False,
 ) -> RoleClassification:
     """Classify the role from the posting. Discovery labels are not copied across."""
     del discovery_family, discovery_bucket, discovery_query
     decided, needs_llm = _deterministic(title, description, content_hash)
+    if truncated and needs_llm:
+        return _unknown(
+            content_hash,
+            "Description is truncated and does not identify the role.",
+        )
     if decided is not None and not needs_llm:
         return decided
     if client is None or len(description.strip()) < 80:

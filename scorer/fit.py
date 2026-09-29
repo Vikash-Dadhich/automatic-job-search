@@ -137,6 +137,8 @@ def fit_is_current(job: Job, profile: Profile) -> bool:
 
 
 def _insufficient(job: Job) -> bool:
+    if job.jd_truncated is True:
+        return True
     if job.jd_status in {"missing", "suspicious"}:
         return True
     return not (job.description_clean or "").strip()

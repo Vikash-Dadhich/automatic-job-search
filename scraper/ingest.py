@@ -12,7 +12,11 @@ from config.profile import Profile, load_profile
 from config.targets import Targets, load_targets
 from core.db import Job, Status, get_job_by_source_id, init_db, session_scope, upsert_job
 from scorer.clients import LLMClient
-from scorer.company_intelligence import attach_company_intelligence
+from scorer.company_intelligence import (
+    HttpCompanyIntelProvider,
+    attach_company_intelligence,
+    trustworthy_company_source,
+)
 from scorer.eligibility import attach_eligibility
 from scraper.coverage import (
     CoverageReport,
@@ -89,6 +93,7 @@ async def _apply_role_classification(
         discovery_bucket=job.discovery_bucket,
         discovery_query=job.discovery_query,
         client=role_client,
+        truncated=job.jd_truncated is True,
     )
     job.role_family = classified.role_family
     job.role_subfamily = classified.role_subfamily
@@ -272,7 +277,14 @@ async def run_ingestion(
             saved = await upsert_job(session, job)
             summary.upserted += 1
             try:
-                await attach_company_intelligence(session, saved)
+                source = trustworthy_company_source(posting.company_url)
+                await attach_company_intelligence(
+                    session,
+                    saved,
+                    source_url=source[0] if source else None,
+                    source_type=source[1] if source else "official_website",
+                    provider=HttpCompanyIntelProvider() if source else None,
+                )
             except Exception as exc:
                 log.warning(
                     "company_intelligence_provider_failure",

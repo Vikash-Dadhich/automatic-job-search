@@ -136,6 +136,61 @@ def extract_company_facts(text: str) -> dict[str, Any]:
     return facts
 
 
+_JOB_BOARD_HOSTS = (
+    "linkedin.com",
+    "indeed.com",
+    "glassdoor.com",
+    "google.com",
+    "ziprecruiter.com",
+    "myworkdayjobs.com",
+)
+
+
+def trustworthy_company_source(url: str | None) -> tuple[str, str] | None:
+    """Classify an already-supplied company URL. Does not invent a domain."""
+    clean = _reliable_source_url(url)
+    if clean is None:
+        return None
+    parsed = urlparse(clean)
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if any(host == board or host.endswith("." + board) for board in _JOB_BOARD_HOSTS):
+        return None
+    if "sec.gov" in host:
+        kind = "sec"
+    elif "careers" in host or "/careers" in parsed.path.lower():
+        kind = "careers"
+    else:
+        kind = "official_website"
+    return clean, kind
+
+
+def _accumulate_sources(
+    prior: list[dict[str, Any]] | None,
+    new: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Keep earlier trustworthy sources and add a new URL once."""
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in prior or []:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url")
+        source_type = item.get("source_type")
+        if not isinstance(url, str) or not url or url in seen:
+            continue
+        if source_type not in _SOURCE_TYPES:
+            continue
+        seen.add(url)
+        kept.append(item)
+    url = new.get("url")
+    source_type = new.get("source_type")
+    if isinstance(url, str) and url and url not in seen and source_type in _SOURCE_TYPES:
+        kept.append(new)
+    return kept
+
+
 def _reliable_source_url(url: str | None) -> str | None:
     if not url or not url.strip():
         return None
@@ -355,13 +410,14 @@ async def resolve_company(
     row = existing or _new_row(company_name, key)
     _apply_facts(row, facts)
     stored_type = _source_type(document.source_type or kind)
-    row.sources = [
+    row.sources = _accumulate_sources(
+        list(row.sources or []),
         {
             "source_type": stored_type,
             "url": document.url,
             "retrieved_at": document.retrieved_at.astimezone(UTC).isoformat(),
-        }
-    ]
+        },
+    )
     row.website = document.url if stored_type == "official_website" else row.website
     row.retrieved_at = document.retrieved_at
     row.status = _status_for(facts)

@@ -147,6 +147,28 @@ async def test_preferred_gap_required_gap_and_conflict(profile: Profile) -> None
     assert conflict.dimensions["REQUIREMENTS_RISK"]["judgment"] == "conflict"
 
 
+async def test_truncated_jd_does_not_receive_a_fit_score(profile: Profile) -> None:
+    client = _Client(_payload(91))
+    job = _job(jd_truncated=True, jd_status="truncated")
+    decision = await evaluate_fit(job, profile, client, model="test", max_tokens=64)
+    assert decision.available is False
+    assert decision.score is None
+    assert client.calls == 0
+    complete = await evaluate_fit(_job(), profile, client, model="test", max_tokens=64)
+    assert complete.available is True
+    assert complete.score == 91
+    assert client.calls == 1
+    missing = await evaluate_fit(
+        _job(description_clean="", jd_status="missing"),
+        profile,
+        client,
+        model="test",
+        max_tokens=64,
+    )
+    assert missing.available is False
+    assert missing.score is None
+
+
 async def test_short_jd_skips_the_model(profile: Profile) -> None:
     client = _Client(_payload(0))
     decision = await evaluate_fit(

@@ -38,6 +38,17 @@ def _row_value(row: dict[str, Any], *keys: str, default: Any = None) -> Any:
     return default
 
 
+def _explicit_company_url(row: dict[str, Any]) -> str | None:
+    """Employer site already on the source row. The job posting URL is not used."""
+    raw = _row_value(row, "company_url", "company_url_direct")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text or text.lower() == "nan":
+        return None
+    return text
+
+
 def _parse_posted_at(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -114,6 +125,7 @@ def _dataframe_to_postings(
             continue
 
         description = _row_value(row, "description")
+        company_url = _explicit_company_url(row)
         description_s = str(description).strip() if description is not None else None
         if description_s and description_s.lower() == "nan":
             description_s = None
@@ -137,6 +149,7 @@ def _dataframe_to_postings(
                 discovery_family=search.family_id if search else None,
                 discovery_bucket=search.bucket_id if search else None,
                 discovery_query=search.query if search else None,
+                company_url=company_url,
             )
         )
     return out

@@ -405,6 +405,37 @@ async def test_unchanged_jd_keeps_classification_and_a_change_replaces_it(db_rea
         assert changed.role_evidence != ["cached"]
 
 
+async def test_truncated_jd_stays_conservative() -> None:
+    clear = await classify_role(
+        title="Product Manager Intern",
+        description=_jd("Own the product roadmap and lead product prioritization."),
+        content_hash="truncated-clear",
+        truncated=True,
+        client=_FakeClient('{"primary_family":"OTHER","subfamily":null,"confidence":"high","evidence":["x"]}'),
+    )
+    assert clear.role_family == "PRODUCT_MANAGEMENT"
+    assert clear.used_llm is False
+    vague = _FakeClient(
+        '{"primary_family":"PRODUCT_MANAGEMENT","subfamily":"PM_CORE","confidence":"high","evidence":["guess"]}'
+    )
+    unknown = await classify_role(
+        title="Technology Intern",
+        description=_jd("Help the technology team with assorted internal projects and notes."),
+        content_hash="truncated-vague",
+        truncated=True,
+        client=vague,
+    )
+    assert unknown.role_family == "UNKNOWN"
+    assert vague.calls == 0
+    complete = await classify_role(
+        title="Product Manager Intern",
+        description=_jd("Own the product roadmap and lead product prioritization."),
+        content_hash="complete",
+        truncated=False,
+    )
+    assert complete.role_family == "PRODUCT_MANAGEMENT"
+
+
 def test_classifier_version_bump_invalidates_phase5_v1() -> None:
     assert ROLE_CLASSIFIER_VERSION == "phase5-v2"
     assert not classification_is_current(

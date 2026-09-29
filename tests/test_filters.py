@@ -93,6 +93,32 @@ def test_exclude_seniority_title(profile: Profile) -> None:
     assert "seniority" in result.reason.lower()
 
 
+def test_yoe_counts_only_a_mandatory_minimum(profile: Profile) -> None:
+    from scraper.filters import max_acceptable_years
+
+    ceiling = max_acceptable_years(profile)
+    cases = [
+        ("3+ years of experience required. 8+ years of experience preferred.", True),
+        ("10+ years of experience required. 12+ years of experience preferred.", False),
+        ("10+ years of experience preferred.", True),
+        ("10+ years desired.", True),
+        ("10+ years of experience desired.", True),
+        ("5+ years of experience required.", True),
+        ("10+ years of experience in product.", True),
+        ("3-5 years of experience required.", True),
+        (
+            f"{ceiling + 1}-{ceiling + 3} years of experience required.",
+            False,
+        ),
+    ]
+    for description, should_pass in cases:
+        result = evaluate(
+            _posting(external_id=description[:12], description_clean=description),
+            profile,
+        )
+        assert result.passed is should_pass, description
+
+
 def test_exclude_high_yoe_requirement(profile: Profile) -> None:
     result = evaluate(
         _posting(

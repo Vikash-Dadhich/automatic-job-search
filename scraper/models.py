@@ -27,6 +27,8 @@ class RawPosting(BaseModel):
     discovery_family: str | None = None
     discovery_bucket: str | None = None
     discovery_query: str | None = None
+    # Explicit employer site from the source row. Never guessed from the name.
+    company_url: str | None = None
     jd_status: str | None = None
     jd_char_count: int | None = None
     jd_truncated: bool | None = None

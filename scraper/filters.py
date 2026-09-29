@@ -218,14 +218,46 @@ def max_acceptable_years(profile: Profile) -> int:
     return int(round(profile.total_years_experience())) + settings.years_experience_slack
 
 
-def _yoe_reason(haystack: str, profile: Profile) -> str | None:
-    """Reject only when every stated YOE requirement is out of reach.
+_YOE_QUALIFIER_RE = re.compile(
+    r"\b(must|requir\w*|minimum|preferred|desirable|desired|ideal)\b",
+    re.IGNORECASE,
+)
 
-    A JD often lists both "3+ years required" and "8+ years preferred"; dropping
-    on the highest number alone discards reachable roles.
+
+def _qualifier_is_mandatory(word: str) -> bool:
+    text = word.lower()
+    return text in {"must", "minimum"} or text.startswith("requir")
+
+
+def _mandatory_years(haystack: str) -> list[int]:
+    """Years that are explicitly required. Preferred or unclear numbers are ignored."""
+    required: list[int] = []
+    for match in _YOE_REQUIRED_RE.finditer(haystack):
+        years = int(match.group(1))
+        if not 0 < years <= 40:
+            continue
+        before = haystack[max(0, match.start() - 80) : match.start()]
+        after = haystack[match.end() : match.end() + 80]
+        nearest: tuple[int, str] | None = None
+        for found in _YOE_QUALIFIER_RE.finditer(before):
+            distance = match.start() - found.end()
+            if nearest is None or distance < nearest[0]:
+                nearest = (distance, found.group(1))
+        for found in _YOE_QUALIFIER_RE.finditer(after):
+            distance = found.start()
+            if nearest is None or distance < nearest[0]:
+                nearest = (distance, found.group(1))
+        if nearest is not None and _qualifier_is_mandatory(nearest[1]):
+            required.append(years)
+    return required
+
+
+def _yoe_reason(haystack: str, profile: Profile) -> str | None:
+    """Reject only when the lowest mandatory experience floor is out of reach.
+
+    Preferred, desired, or unlabeled year counts are not a hard rejection.
     """
-    demands = [int(m.group(1)) for m in _YOE_REQUIRED_RE.finditer(haystack)]
-    demands = [d for d in demands if 0 < d <= 40]
+    demands = _mandatory_years(haystack)
     if not demands:
         return None
     ceiling = max_acceptable_years(profile)

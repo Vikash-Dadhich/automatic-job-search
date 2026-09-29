@@ -25,11 +25,14 @@ from scorer.company_intelligence import (
     canonical_company_name,
     extract_company_facts,
     normalize_company_name,
+    refresh_company_intelligence,
     resolve_company,
+    trustworthy_company_source,
 )
 from scorer.engine import compute_tier, is_dream_company
 from scorer.role_weights import get_role_family_weight
 from scraper.discovery import load_discovery
+from scraper.linkedin_jobspy import _explicit_company_url
 from scraper.models import RawPosting, to_job
 
 ACME_TEXT = "Acme is a publicly traded software company headquartered in Seattle."
@@ -468,3 +471,104 @@ async def test_persisted_source_type_matches_the_caller(db_ready: Path) -> None:
     assert record.sources[0]["source_type"] == "sec"
     assert record.sources[0]["url"] == "https://www.sec.gov/Archives/edgar/data/1/acme.htm"
     assert record.website is None
+
+
+def test_company_url_is_not_guessed_or_taken_from_the_job_page() -> None:
+    assert trustworthy_company_source(None) is None
+    assert trustworthy_company_source("acme.com") is None
+    assert trustworthy_company_source("https://www.linkedin.com/jobs/view/1") is None
+    assert trustworthy_company_source("https://acme.wd5.myworkdayjobs.com/en-US/job/1") is None
+    official = trustworthy_company_source("https://www.acme.example/about")
+    assert official == ("https://www.acme.example/about", "official_website")
+    careers = trustworthy_company_source("https://careers.acme.example/jobs")
+    assert careers is not None
+    assert careers[1] == "careers"
+    sec = trustworthy_company_source("https://www.sec.gov/Archives/edgar/data/1/acme.htm")
+    assert sec is not None
+    assert sec[1] == "sec"
+    assert _explicit_company_url({"job_url": "https://www.linkedin.com/jobs/1"}) is None
+    assert _explicit_company_url({"company_url": "https://acme.example"}) == "https://acme.example"
+
+
+async def test_company_sources_accumulate_and_a_failed_refresh_keeps_them(db_ready: Path) -> None:
+    provider = FakeProvider()
+    official = "https://acme.example/about"
+    careers = "https://careers.acme.example/jobs"
+    async with session_scope() as session:
+        first = await resolve_company(
+            session,
+            "Acme, Inc.",
+            source_url=official,
+            source_type="official_website",
+            provider=provider,
+        )
+        assert [item["url"] for item in first.sources] == [official]
+        assert first.sources[0]["source_type"] == "official_website"
+        assert first.sources[0]["retrieved_at"]
+        second = await refresh_company_intelligence(
+            session,
+            "Acme Inc",
+            source_url=careers,
+            source_type="careers",
+            provider=provider,
+        )
+        urls = [item["url"] for item in second.sources]
+        assert official in urls
+        assert careers in urls
+        kinds = {item["url"]: item["source_type"] for item in second.sources}
+        assert kinds[official] == "official_website"
+        assert kinds[careers] == "careers"
+        assert second.industry == "software"
+        third = await refresh_company_intelligence(
+            session,
+            "Acme",
+            source_url=official,
+            source_type="official_website",
+            provider=provider,
+        )
+        assert [item["url"] for item in third.sources] == urls
+        calls = provider.calls
+        provider.raise_exc = TimeoutError("slow")
+        kept = await refresh_company_intelligence(
+            session,
+            "Acme",
+            source_url=official,
+            source_type="official_website",
+            provider=provider,
+        )
+        assert kept.id == first.id
+        assert kept.status == "partial"
+        assert kept.industry == "software"
+        assert [item["url"] for item in kept.sources] == urls
+        left = to_job(
+            RawPosting(
+                source=Source.linkedin,
+                external_id="co-a",
+                title="Product Manager Intern",
+                company="Acme, Inc.",
+                location="Seattle, WA",
+                url="https://example.com/co-a",
+                description_clean="Requirements\nOwn a product roadmap. " * 4,
+            ),
+            status=Status.staged,
+        )
+        right = to_job(
+            RawPosting(
+                source=Source.indeed,
+                external_id="co-b",
+                title="Consultant Intern",
+                company="Acme Inc",
+                location="Remote",
+                url="https://example.com/co-b",
+                description_clean="Requirements\nJoin a client team. " * 4,
+            ),
+            status=Status.staged,
+        )
+        left.score = 90
+        right.score = 60
+        await attach_company_intelligence(session, left)
+        await attach_company_intelligence(session, right)
+        assert provider.calls == calls + 1
+        assert left.company_intelligence_id == right.company_intelligence_id == kept.id
+        assert left.score == 90
+        assert right.score == 60
