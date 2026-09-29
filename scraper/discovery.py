@@ -138,23 +138,28 @@ class FamilyAllocation:
     available: int
     ideal: Decimal
     assigned: int
-
-    @property
-    def spillover(self) -> int:
-        """Units received above the uncapped ideal, after capacity caps."""
-        above = self.assigned - int(self.ideal)
-        return above if above > 0 else 0
+    spillover: int
 
 
 @dataclass(frozen=True, slots=True)
 class DiscoveryPlan:
     capacity_requested: int
+    capacity_usable: int
     capacity_assigned: int
     families: tuple[FamilyAllocation, ...]
     bucket_assigned: dict[str, int]
     searches: tuple[PlannedSearch, ...]
     jobspy_sites: tuple[str, ...]
     workday_enabled: bool
+
+    @property
+    def spillover(self) -> int:
+        """Units redistributed because a family could not fill its share.
+
+        A request larger than the whole query catalog is unavailable capacity,
+        not spillover.
+        """
+        return sum(family.spillover for family in self.families)
 
     def provenance_for(self, query: str) -> PlannedSearch | None:
         for search in self.searches:
@@ -318,12 +323,15 @@ def build_discovery_plan(
 
     total_available = sum(available_by_family.values())
     requested = total_available if capacity is None else max(capacity, 0)
+    usable = min(requested, total_available)
+    # The catalog cannot fill the request. Exhausting it is not spillover.
+    global_shortage = requested > total_available
     assigned = allocate_units(family_items, requested)
 
     enabled = [item for item in family_items if item.weight > 0 and item.available > 0]
     weight_sum = sum((item.weight for item in enabled), Decimal("0"))
     ideals = {
-        item.id: (Decimal(requested) * item.weight / weight_sum if weight_sum else Decimal("0"))
+        item.id: (Decimal(usable) * item.weight / weight_sum if weight_sum else Decimal("0"))
         for item in family_items
     }
 
@@ -366,11 +374,17 @@ def build_discovery_plan(
             available=available_by_family.get(family.id, 0),
             ideal=ideals.get(family.id, Decimal("0")),
             assigned=assigned.get(family.id, 0),
+            spillover=_family_spillover(
+                assigned.get(family.id, 0),
+                ideals.get(family.id, Decimal("0")),
+                global_shortage=global_shortage,
+            ),
         )
         for family in catalog.families
     )
     return DiscoveryPlan(
         capacity_requested=requested,
+        capacity_usable=usable,
         capacity_assigned=sum(assigned.values()),
         families=families,
         bucket_assigned=bucket_assigned,
@@ -380,12 +394,26 @@ def build_discovery_plan(
     )
 
 
+def _family_spillover(assigned: int, ideal: Decimal, *, global_shortage: bool) -> int:
+    """Units this family received from another family's unused share.
+
+    When the request is larger than the catalog, every query is simply used.
+    That gap is unavailable capacity, not redistributed spillover.
+    """
+    if global_shortage:
+        return 0
+    extra = assigned - int(ideal)
+    return extra if extra > 0 else 0
+
+
 def log_discovery_plan(plan: DiscoveryPlan) -> None:
     """Secret-free summary of one search plan."""
     log.info(
         "discovery_plan",
         capacity_requested=plan.capacity_requested,
+        capacity_usable=plan.capacity_usable,
         capacity_assigned=plan.capacity_assigned,
+        spillover=plan.spillover,
         families=[
             {
                 "id": family.family_id,

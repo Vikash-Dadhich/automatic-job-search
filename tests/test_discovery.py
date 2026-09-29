@@ -114,6 +114,101 @@ def test_spillover_when_other_has_two_units() -> None:
         assert assigned[item.id] <= item.available
 
 
+def _catalog(counts: dict[str, int]) -> DiscoveryConfig:
+    families = [
+        RoleFamily(
+            id=family_id,
+            name=family_id,
+            weight=_WEIGHTS[family_id],
+            buckets=[
+                SearchBucket(
+                    id=f"{family_id}_BUCKET",
+                    name=family_id,
+                    queries=[f"{family_id} query {index}" for index in range(count)],
+                )
+            ],
+        )
+        for family_id, count in counts.items()
+    ]
+    return DiscoveryConfig(
+        families=families,
+        sources=[DiscoverySource(id="linkedin", name="LinkedIn")],
+    )
+
+
+class _Sites:
+    sites = ["linkedin"]
+
+
+class _Targets:
+    search = _Sites()
+
+
+def test_global_shortage_is_not_spillover() -> None:
+    load_targets.cache_clear()
+    plan = build_discovery_plan(load_targets(), capacity=100)
+    assert plan.capacity_requested == 100
+    assert plan.capacity_usable == 19
+    assert plan.capacity_assigned == 19
+    assert len(plan.searches) == 19
+    assert plan.spillover == 0
+    assert all(family.spillover == 0 for family in plan.families)
+    full = build_discovery_plan(load_targets())
+    assert [item.query for item in plan.searches] == [item.query for item in full.searches]
+    load_targets.cache_clear()
+
+
+def test_family_shortage_reports_genuine_spillover() -> None:
+    config = _catalog(
+        {
+            "PRODUCT_MANAGEMENT": 100,
+            "CONSULTING": 100,
+            "STRATEGY_TRANSFORMATION": 100,
+            "OTHER": 2,
+        }
+    )
+    plan = build_discovery_plan(_Targets(), capacity=100, config=config)
+    by_id = {family.family_id: family for family in plan.families}
+    assert plan.capacity_requested == 100
+    assert plan.capacity_usable == 100
+    assert plan.capacity_assigned == 100
+    assert by_id["OTHER"].assigned == 2
+    assert by_id["OTHER"].spillover == 0
+    assert by_id["PRODUCT_MANAGEMENT"].assigned == 41
+    assert by_id["CONSULTING"].assigned == 41
+    assert by_id["STRATEGY_TRANSFORMATION"].assigned == 16
+    assert plan.spillover == 3
+
+
+def test_sufficient_capacity_has_no_spillover() -> None:
+    config = _catalog(
+        {
+            "PRODUCT_MANAGEMENT": 40,
+            "CONSULTING": 40,
+            "STRATEGY_TRANSFORMATION": 15,
+            "OTHER": 5,
+        }
+    )
+    plan = build_discovery_plan(_Targets(), capacity=100, config=config)
+    by_id = {family.family_id: family for family in plan.families}
+    assert plan.spillover == 0
+    assert by_id["PRODUCT_MANAGEMENT"].assigned == 40
+    assert by_id["CONSULTING"].assigned == 40
+    assert by_id["STRATEGY_TRANSFORMATION"].assigned == 15
+    assert by_id["OTHER"].assigned == 5
+    assert all(family.spillover == 0 for family in plan.families)
+
+
+def test_plan_diagnostics_are_deterministic() -> None:
+    load_targets.cache_clear()
+    targets = load_targets()
+    first = build_discovery_plan(targets, capacity=100)
+    second = build_discovery_plan(targets, capacity=100)
+    assert first == second
+    assert first.spillover == second.spillover
+    load_targets.cache_clear()
+
+
 def test_allocation_is_deterministic() -> None:
     items = _items()
     assert allocate_units(items, 100) == allocate_units(items, 100)

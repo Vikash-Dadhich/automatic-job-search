@@ -94,11 +94,13 @@ With a request of 100 and enough queries in every family, the split is 40 / 40 /
 
 ## Spillover behavior
 
-Spillover is unused search capacity. It is not unused fit, a weak embedding, or a low tier.
+Spillover is search capacity a family could not use, which was then given to other families. It is not unused fit, a weak embedding, or a low tier.
 
-Example: request 100, Other has only 2 queries. Other receives 2. The other 3 units are split across Product Management, Consulting, and Strategy / Transformation by their weights 0.40 / 0.40 / 0.15. The result is 41 / 41 / 16 / 2.
+A request larger than the whole query catalog is unavailable capacity. The current catalog has 19 queries. A request of 100 still runs those 19 searches. The other 81 units are not spillover. The plan records requested 100, usable 19, allocated 19, spillover 0.
 
-The default production plan requests one execution per enabled query, so every configured query runs once and spillover only appears when a caller passes a smaller `search_capacity` or a family has fewer queries than its ideal share.
+Spillover is the other case: the catalog can fill the request, but one family has fewer queries than its share. Request 100, Other has only 2 queries, and the other families have room. Other's unused 3 units move to Product Management, Consulting, and Strategy / Transformation. The result is 41 / 41 / 16 / 2, and the plan records spillover 3.
+
+The default production plan requests one execution per enabled query, so every configured query runs once.
 
 Inside a family, the same rule splits that family's units across its buckets in proportion to how many queries each bucket has. Queries are then taken in file order. There is no second pass that searches again because the first results looked weak.
 
@@ -121,7 +123,7 @@ Each new or refreshed job can store:
 
 JobSpy stamps the query that returned the row. Workday stamps the same fields when the tenant search used a planned query. The first query to see a `(source, external id)` pair keeps the provenance. `discovered_at` is still the run timestamp.
 
-A production run logs `discovery_plan` with requested capacity, per-family ideal and assigned counts, spillover, per-bucket counts, search count, and sources. The log has no secrets and no profile text.
+A production run logs `discovery_plan` with requested capacity, usable capacity, per-family ideal and assigned counts, genuine spillover, per-bucket counts, search count, and sources. The log has no secrets and no profile text.
 
 ## What Phase 1 does not do
 
