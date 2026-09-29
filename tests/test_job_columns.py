@@ -38,6 +38,12 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "jd_char_count",
         "jd_truncated",
         "jd_extraction_path",
+        "role_family",
+        "role_subfamily",
+        "role_confidence",
+        "role_evidence",
+        "role_classifier_version",
+        "role_content_hash",
     } <= names
 
     await init_db()

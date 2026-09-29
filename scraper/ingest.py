@@ -10,7 +10,8 @@ import structlog
 
 from config.profile import Profile, load_profile
 from config.targets import Targets, load_targets
-from core.db import Status, init_db, session_scope, upsert_job
+from core.db import Job, Status, get_job_by_source_id, init_db, session_scope, upsert_job
+from scorer.clients import LLMClient
 from scraper.coverage import (
     CoverageReport,
     SearchObservation,
@@ -37,6 +38,62 @@ class IngestSummary:
     by_source: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     coverage: CoverageReport | None = None
+
+
+async def _load_role_client() -> LLMClient | None:
+    try:
+        from scorer.clients import build_llm_client
+
+        return build_llm_client()
+    except Exception:
+        return None
+
+
+async def _apply_role_classification(
+    session: object,
+    job: Job,
+    role_client: LLMClient | None,
+) -> None:
+    """Label the role from the normalized JD. Does not change job status."""
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    from scorer.role_classify import (
+        ROLE_CLASSIFIER_VERSION,
+        classification_is_current,
+        classify_role,
+    )
+
+    if not isinstance(session, AsyncSession):
+        return
+    existing = await get_job_by_source_id(session, job.source, job.external_id)
+    if existing is not None and classification_is_current(
+        role_family=existing.role_family,
+        role_content_hash=existing.role_content_hash,
+        role_classifier_version=existing.role_classifier_version,
+        content_hash=job.content_hash,
+    ):
+        job.role_family = existing.role_family
+        job.role_subfamily = existing.role_subfamily
+        job.role_confidence = existing.role_confidence
+        job.role_evidence = existing.role_evidence
+        job.role_classifier_version = existing.role_classifier_version
+        job.role_content_hash = existing.role_content_hash
+        return
+    classified = await classify_role(
+        title=job.title,
+        description=job.description_clean or "",
+        content_hash=job.content_hash,
+        discovery_family=job.discovery_family,
+        discovery_bucket=job.discovery_bucket,
+        discovery_query=job.discovery_query,
+        client=role_client,
+    )
+    job.role_family = classified.role_family
+    job.role_subfamily = classified.role_subfamily
+    job.role_confidence = classified.role_confidence
+    job.role_evidence = classified.role_evidence
+    job.role_classifier_version = classified.role_classifier_version or ROLE_CLASSIFIER_VERSION
+    job.role_content_hash = classified.role_content_hash
 
 
 def _attach_coverage(
@@ -194,6 +251,7 @@ async def run_ingestion(
     for posting in postings:
         posting.ensure_clean_description()
 
+    role_client = await _load_role_client()
     async with session_scope() as session:
         for posting in postings:
             result = evaluate(posting, profile)
@@ -208,6 +266,7 @@ async def run_ingestion(
                 )
                 summary.filtered_out += 1
 
+            await _apply_role_classification(session, job, role_client)
             await upsert_job(session, job)
             summary.upserted += 1
 

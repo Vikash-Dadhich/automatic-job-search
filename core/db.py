@@ -101,6 +101,12 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "jd_char_count": "INTEGER",
         "jd_truncated": "INTEGER",
         "jd_extraction_path": "VARCHAR(32)",
+        "role_family": "VARCHAR(64)",
+        "role_subfamily": "VARCHAR(64)",
+        "role_confidence": "VARCHAR(16)",
+        "role_evidence": "JSON",
+        "role_classifier_version": "VARCHAR(32)",
+        "role_content_hash": "VARCHAR(64)",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -119,6 +125,12 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "jd_char_count": "INTEGER",
         "jd_truncated": "BOOLEAN",
         "jd_extraction_path": "VARCHAR(32)",
+        "role_family": "VARCHAR(64)",
+        "role_subfamily": "VARCHAR(64)",
+        "role_confidence": "VARCHAR(16)",
+        "role_evidence": "JSON",
+        "role_classifier_version": "VARCHAR(32)",
+        "role_content_hash": "VARCHAR(64)",
     },
 }
 
@@ -186,6 +198,13 @@ class Job(SQLModel, table=True):
     jd_char_count: int | None = Field(default=None)
     jd_truncated: bool | None = Field(default=None)
     jd_extraction_path: str | None = Field(default=None, max_length=32)
+    # What the posting is. Not a candidate-fit score and not the discovery label.
+    role_family: str | None = Field(default=None, max_length=64)
+    role_subfamily: str | None = Field(default=None, max_length=64)
+    role_confidence: str | None = Field(default=None, max_length=16)
+    role_evidence: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    role_classifier_version: str | None = Field(default=None, max_length=32)
+    role_content_hash: str | None = Field(default=None, max_length=64)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -513,6 +532,17 @@ def _stored_description_usable(job: Job) -> bool:
     return False
 
 
+def _role_classification_current(job: Job) -> bool:
+    from scorer.role_classify import classification_is_current
+
+    return classification_is_current(
+        role_family=job.role_family,
+        role_content_hash=job.role_content_hash,
+        role_classifier_version=job.role_classifier_version,
+        content_hash=job.content_hash,
+    )
+
+
 def _keep_stored_description(existing: Job, incoming: Job) -> bool:
     """Do not replace a usable JD with an empty or too-short refetch."""
     return _incoming_description_unusable(incoming) and _stored_description_usable(existing)
@@ -583,6 +613,22 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.vector_profile_hash = None
         existing.vector_decision = None
         existing.embedding_model = None
+        existing.role_family = None
+        existing.role_subfamily = None
+        existing.role_confidence = None
+        existing.role_evidence = None
+        existing.role_classifier_version = None
+        existing.role_content_hash = None
+    if job.role_family is not None and (
+        content_changed
+        or not _role_classification_current(existing)
+    ):
+        existing.role_family = job.role_family
+        existing.role_subfamily = job.role_subfamily
+        existing.role_confidence = job.role_confidence
+        existing.role_evidence = job.role_evidence
+        existing.role_classifier_version = job.role_classifier_version
+        existing.role_content_hash = job.role_content_hash or existing.content_hash
     if existing.status in {Status.discovered, Status.filtered_out}:
         existing.status = job.status
         if job.justification is not None:
