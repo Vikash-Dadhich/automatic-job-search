@@ -651,6 +651,17 @@ class Scorer:
                 if target is None:
                     return _JobOutcome(kind="error", detail=f"job {job.id} missing")
 
+                try:
+                    from scorer.eligibility import attach_eligibility
+
+                    await attach_eligibility(target, profile)
+                except Exception as exc:
+                    log.warning(
+                        "eligibility_failed",
+                        job_id=job.id,
+                        error=str(exc)[:200],
+                    )
+
                 if not evaluation.fit_available:
                     target.fit_confidence = evaluation.fit_confidence
                     target.fit_strengths = evaluation.fit_strengths

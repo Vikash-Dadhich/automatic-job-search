@@ -42,20 +42,25 @@ _YOE_REQUIRED_RE = re.compile(
     r"(?:\s+of)?\s+(?:relevant\s+|professional\s+|related\s+)?(?:experience|exp\.?)\b",
     re.IGNORECASE,
 )
-_SPONSORSHIP_HOSTILE_PATTERNS = (
-    r"no\s+(?:visa\s+)?sponsorship",
-    # do/does not + cannot offer/provide sponsorship
-    r"do(?:es)?\s+not\s+(?:offer|provide)\s+(?:visa\s+)?sponsorship",
-    r"cannot\s+(?:offer|provide|sponsor)\b",
-    r"can\s+not\s+(?:offer|provide|sponsor)\b",
+_CITIZENSHIP_PATTERNS = (
     r"must\s+be\s+(?:a\s+)?(?:us|u\.s\.)\s+citizen",
     r"(?:us|u\.s\.)\s+citizens?\s+only",
     r"citizenship\s+required",
     # "requires US citizenship" (word order reversed from "citizenship required")
     r"requires?\s+(?:us|u\.s\.)\s+citizenship",
+)
+_VISA_HOSTILE_PATTERNS = (
+    r"no\s+(?:visa\s+)?sponsorship",
+    # do/does not + cannot offer/provide sponsorship
+    r"do(?:es)?\s+not\s+(?:offer|provide)\s+(?:visa\s+)?sponsorship",
+    # "we do not sponsor" but not "we do not sponsor employee events"
+    r"do(?:es)?\s+not\s+sponsor\b(?!\s+employee)",
+    r"cannot\s+(?:offer|provide|sponsor)\b",
+    r"can\s+not\s+(?:offer|provide|sponsor)\b",
     r"unable\s+to\s+sponsor",
     r"will\s+not\s+sponsor",
 )
+_SPONSORSHIP_HOSTILE_PATTERNS = _VISA_HOSTILE_PATTERNS + _CITIZENSHIP_PATTERNS
 # Patterns that signal the company actively sponsors visas.
 # Hostile patterns are checked first, so negated variants ("we do NOT sponsor")
 # are never misclassified as friendly.
@@ -80,6 +85,11 @@ class FilterResult:
     reason: str | None = None
 
 
+def _matches_any(text: str, patterns: tuple[str, ...]) -> bool:
+    haystack = text.lower()
+    return any(re.search(pattern, haystack, re.IGNORECASE) for pattern in patterns)
+
+
 def sponsorship_signal(text: str) -> str:
     """Classify a JD's stance on visa sponsorship without a profile dependency.
 
@@ -91,14 +101,48 @@ def sponsorship_signal(text: str) -> str:
     Hostile is checked before friendly so a phrase like
     "We do NOT sponsor visas" is never misclassified.
     """
-    haystack = text.lower()
-    for pattern in _SPONSORSHIP_HOSTILE_PATTERNS:
-        if re.search(pattern, haystack, re.IGNORECASE):
-            return "hostile"
-    for pattern in _SPONSORSHIP_FRIENDLY_PATTERNS:
-        if re.search(pattern, haystack, re.IGNORECASE):
-            return "friendly"
+    if _matches_any(text, _SPONSORSHIP_HOSTILE_PATTERNS):
+        return "hostile"
+    if _matches_any(text, _SPONSORSHIP_FRIENDLY_PATTERNS):
+        return "friendly"
     return "unknown"
+
+
+def visa_sponsorship_signal(text: str) -> str:
+    """Visa-sponsorship stance only. Citizenship restrictions are separate."""
+    if _matches_any(text, _VISA_HOSTILE_PATTERNS):
+        return "hostile"
+    if _matches_any(text, _SPONSORSHIP_FRIENDLY_PATTERNS):
+        return "friendly"
+    return "unknown"
+
+
+def citizenship_restriction(text: str) -> bool:
+    """True when the posting explicitly limits applicants to U.S. citizens."""
+    return _matches_any(text, _CITIZENSHIP_PATTERNS)
+
+
+def clearance_requirement(text: str) -> str:
+    """``required``, ``preferred``, or ``none``. Preferred alone is not required."""
+    hard = _matches_any(text, _CLEARANCE_PATTERNS)
+    mentions_clearance = bool(re.search(r"clearance", text, re.IGNORECASE))
+    preferred = bool(re.search(r"\bpreferred\b", text, re.IGNORECASE)) and mentions_clearance
+    hard_words = bool(re.search(r"\b(?:required|must|active)\b", text, re.IGNORECASE))
+    if hard and preferred and not hard_words:
+        return "preferred"
+    if hard:
+        return "required"
+    if preferred:
+        return "preferred"
+    return "none"
+
+
+def has_internship_signal(title: str | None, *, today: datetime | None = None) -> bool:
+    """True when the title uses the same internship signals as the ingest gate."""
+    if _INTERN_WORD_RE.search(title or ""):
+        return True
+    title_lower = (title or "").lower()
+    return any(sig in title_lower for sig in _soft_internship_signals(today))
 
 
 # Current year through this many years ahead, so "Summer 2029" still matches
@@ -201,9 +245,7 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
             "vice president",
         )
         has_intern_word = bool(_INTERN_WORD_RE.search(posting.title or ""))
-        has_positive = has_intern_word or any(
-            sig in title_lower for sig in _soft_internship_signals()
-        )
+        has_positive = has_internship_signal(posting.title)
         # Seniority block only applies when we're relying on softer signals
         # (new grad, summer 202x) — not when "intern/internship" is explicit.
         # This preserves roles like "Summer VP Internship" (bank MBA programs).

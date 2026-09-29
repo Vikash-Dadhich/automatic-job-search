@@ -110,6 +110,13 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
         "company_intelligence_id": "INTEGER",
+        "eligibility_state": "VARCHAR(32)",
+        "eligibility_reasons": "JSON",
+        "eligibility_evidence": "JSON",
+        "eligibility_dimensions": "JSON",
+        "eligibility_version": "VARCHAR(32)",
+        "eligibility_content_hash": "VARCHAR(64)",
+        "eligibility_profile_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -145,6 +152,13 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
         "company_intelligence_id": "INTEGER",
+        "eligibility_state": "VARCHAR(32)",
+        "eligibility_reasons": "JSON",
+        "eligibility_evidence": "JSON",
+        "eligibility_dimensions": "JSON",
+        "eligibility_version": "VARCHAR(32)",
+        "eligibility_content_hash": "VARCHAR(64)",
+        "eligibility_profile_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -266,6 +280,23 @@ class Job(SQLModel, table=True):
         foreign_key="company_intelligence.id",
         index=True,
     )
+    # Visa and eligibility. Not a fit score and not a rank.
+    eligibility_state: str | None = Field(default=None, max_length=32)
+    eligibility_reasons: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    eligibility_evidence: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    eligibility_dimensions: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    eligibility_version: str | None = Field(default=None, max_length=32)
+    eligibility_content_hash: str | None = Field(default=None, max_length=64)
+    eligibility_profile_hash: str | None = Field(default=None, max_length=64)
     # Candidate-to-JD fit. `score` stays the compatibility value when fit is available.
     fit_confidence: str | None = Field(default=None, max_length=16)
     fit_strengths: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
@@ -709,6 +740,13 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.fit_version = None
         existing.fit_content_hash = None
         existing.fit_profile_hash = None
+        existing.eligibility_state = None
+        existing.eligibility_reasons = None
+        existing.eligibility_evidence = None
+        existing.eligibility_dimensions = None
+        existing.eligibility_version = None
+        existing.eligibility_content_hash = None
+        existing.eligibility_profile_hash = None
     if job.role_family is not None and (
         content_changed
         or not _role_classification_current(existing)

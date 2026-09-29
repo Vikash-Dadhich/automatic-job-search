@@ -13,6 +13,7 @@ from config.targets import Targets, load_targets
 from core.db import Job, Status, get_job_by_source_id, init_db, session_scope, upsert_job
 from scorer.clients import LLMClient
 from scorer.company_intelligence import attach_company_intelligence
+from scorer.eligibility import attach_eligibility
 from scraper.coverage import (
     CoverageReport,
     SearchObservation,
@@ -275,6 +276,14 @@ async def run_ingestion(
             except Exception as exc:
                 log.warning(
                     "company_intelligence_provider_failure",
+                    company=saved.company,
+                    error=str(exc)[:200],
+                )
+            try:
+                await attach_eligibility(saved, profile)
+            except Exception as exc:
+                log.warning(
+                    "eligibility_failed",
                     company=saved.company,
                     error=str(exc)[:200],
                 )
