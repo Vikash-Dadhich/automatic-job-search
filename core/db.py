@@ -714,11 +714,12 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.tenant = job.tenant
     if job.posted_at is not None:
         existing.posted_at = job.posted_at
-    if job.discovery_family is not None:
+    # First discovery provenance stays. A later hit may fill a blank field only.
+    if job.discovery_family and not existing.discovery_family:
         existing.discovery_family = job.discovery_family
-    if job.discovery_bucket is not None:
+    if job.discovery_bucket and not existing.discovery_bucket:
         existing.discovery_bucket = job.discovery_bucket
-    if job.discovery_query is not None:
+    if job.discovery_query and not existing.discovery_query:
         existing.discovery_query = job.discovery_query
     if content_changed:
         existing.embedding = None

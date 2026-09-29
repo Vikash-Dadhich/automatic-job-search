@@ -65,7 +65,11 @@ def test_catalog_weights_and_phrase_count_unchanged() -> None:
     config = load_discovery()
     found = {family.id: family.weight for family in config.families}
     assert found == _WEIGHTS
-    assert len(enabled_query_texts(config)) == 88
+    texts = enabled_query_texts(config)
+    assert len(texts) == 111
+    assert "MBA Summer Associate" in texts
+    assert "Marketing Intern" in texts
+    assert "Technology Strategy Intern" in texts
     variants = [
         variant
         for family in config.families

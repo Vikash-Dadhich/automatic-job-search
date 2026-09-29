@@ -173,16 +173,17 @@ class _Targets:
 
 def test_global_shortage_is_not_spillover() -> None:
     load_targets.cache_clear()
-    plan = build_discovery_plan(load_targets(), capacity=100)
+    full = build_discovery_plan(load_targets())
+    requested = len(full.searches) + 1
+    plan = build_discovery_plan(load_targets(), capacity=requested)
     catalog = sum(family.available for family in plan.families)
-    assert plan.capacity_requested == 100
-    assert catalog < 100
+    assert plan.capacity_requested == requested
+    assert catalog < requested
     assert plan.capacity_usable == catalog
     assert plan.capacity_assigned == catalog
     assert len(plan.searches) == catalog
     assert plan.spillover == 0
     assert all(family.spillover == 0 for family in plan.families)
-    full = build_discovery_plan(load_targets())
     assert [item.query for item in plan.searches] == [item.query for item in full.searches]
     load_targets.cache_clear()
 

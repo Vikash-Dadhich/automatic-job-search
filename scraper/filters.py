@@ -137,12 +137,54 @@ def clearance_requirement(text: str) -> str:
     return "none"
 
 
-def has_internship_signal(title: str | None, *, today: datetime | None = None) -> bool:
-    """True when the title uses the same internship signals as the ingest gate."""
+_MBA_SUMMER_ASSOCIATE_RE = re.compile(
+    r"\bmba\b[\w\s,&/-]{0,40}\bsummer\s+associate\b"
+    r"|\bsummer\s+associate\b[\w\s,&/-]{0,40}\bmba\b",
+    re.IGNORECASE,
+)
+_SUMMER_ASSOCIATE_FOCUS_RE = re.compile(
+    r"\bsummer\s+associate\b[\w\s,&/-]{0,48}\b"
+    r"(?:strategy|marketing|product|consulting|transformation)\b"
+    r"|\b(?:strategy|marketing|product|consulting|transformation)\b"
+    r"[\w\s,&/-]{0,48}\bsummer\s+associate\b",
+    re.IGNORECASE,
+)
+_MBA_ASSOCIATE_RE = re.compile(r"\bmba\s+associate\b", re.IGNORECASE)
+_SUMMER_OR_INTERN_RE = re.compile(r"\b(?:summer|internship|intern)\b", re.IGNORECASE)
+_MBA_PROGRAM_RE = re.compile(
+    r"\b(?:summer internship|mba internship|internship program|summer program|"
+    r"for mba students|\d{1,2}-week internship)\b",
+    re.IGNORECASE,
+)
+
+
+def has_internship_signal(
+    title: str | None,
+    *,
+    description: str | None = None,
+    today: datetime | None = None,
+) -> bool:
+    """True for intern titles and controlled MBA summer-associate titles.
+
+    The word Associate by itself is not an internship signal.
+    """
     if _INTERN_WORD_RE.search(title or ""):
         return True
     title_lower = (title or "").lower()
-    return any(sig in title_lower for sig in _soft_internship_signals(today))
+    if any(sig in title_lower for sig in _soft_internship_signals(today)):
+        return True
+    blob = f"{title or ''}\n{description or ''}"
+    if _MBA_SUMMER_ASSOCIATE_RE.search(title or ""):
+        return True
+    if _SUMMER_ASSOCIATE_FOCUS_RE.search(title or ""):
+        return True
+    if re.search(r"\bsummer\s+associate\b", title or "", re.IGNORECASE) and _MBA_PROGRAM_RE.search(
+        blob
+    ):
+        return True
+    if _MBA_ASSOCIATE_RE.search(title or "") and _SUMMER_OR_INTERN_RE.search(blob):
+        return True
+    return False
 
 
 # Current year through this many years ahead, so "Summer 2029" still matches
@@ -245,7 +287,10 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
             "vice president",
         )
         has_intern_word = bool(_INTERN_WORD_RE.search(posting.title or ""))
-        has_positive = has_internship_signal(posting.title)
+        has_positive = has_internship_signal(
+            posting.title,
+            description=posting.description_clean,
+        )
         # Seniority block only applies when we're relying on softer signals
         # (new grad, summer 202x) — not when "intern/internship" is explicit.
         # This preserves roles like "Summer VP Internship" (bank MBA programs).

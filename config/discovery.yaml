@@ -32,6 +32,8 @@ families:
           - "MBA Product Management Intern"
           - "Associate Product Manager Intern"
           - "Product Management MBA Intern"
+          - "MBA Product Summer Associate"
+          - "Summer Associate, Product Management"
         title_variants:
           - "APM Intern"
           - "Product Manager MBA Intern"
@@ -80,6 +82,9 @@ families:
           - "Consulting Intern"
           - "MBA Consulting Intern"
           - "Advisory Intern"
+          - "MBA Summer Associate"
+          - "Summer Associate MBA"
+          - "MBA Summer Internship"
         title_variants:
           - "Consulting Summer Intern"
           - "Summer Consulting Intern"
@@ -143,6 +148,9 @@ families:
           - "Enterprise Strategy Intern"
           - "Growth Strategy Intern"
           - "Corporate Development Intern"
+          - "MBA Strategy Summer Associate"
+          - "Summer Associate, Strategy"
+          - "Summer Associate, Corporate Strategy"
         title_variants:
           - "Growth Strategy MBA Intern"
 
@@ -179,6 +187,18 @@ families:
           - "Transformation Strategy Intern"
           - "Transformation Management Intern"
 
+      - id: TECHNOLOGY_STRATEGY
+        name: Technology strategy
+        enabled: true
+        queries:
+          - "Technology Strategy Intern"
+          - "Tech Strategy Intern"
+          - "IT Strategy Intern"
+          - "Digital Strategy Intern"
+          - "Technology Transformation Intern"
+          - "MBA Technology Strategy Intern"
+          - "Technology Strategy Summer Associate"
+
       - id: GTM_STRATEGY
         name: Go-to-market strategy
         enabled: true
@@ -192,6 +212,19 @@ families:
     weight: "0.05"
     enabled: true
     buckets:
+      - id: MARKETING
+        name: Marketing
+        enabled: true
+        queries:
+          - "Marketing Intern"
+          - "Marketing Strategy Intern"
+          - "Brand Management Intern"
+          - "Brand Strategy Intern"
+          - "Consumer Marketing Intern"
+          - "MBA Marketing Intern"
+          - "MBA Marketing Summer Associate"
+          - "Marketing Summer Associate"
+
       - id: PRODUCT_MARKETING
         name: Product marketing
         enabled: true

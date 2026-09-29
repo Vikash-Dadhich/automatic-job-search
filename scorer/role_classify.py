@@ -20,6 +20,7 @@ PRIMARY_FAMILIES = frozenset(
         "STRATEGY_TRANSFORMATION",
         "PRODUCT_MARKETING",
         "PROGRAM_PROJECT_OPERATIONS",
+        "MARKETING",
         "OTHER",
         "UNKNOWN",
     }
@@ -43,7 +44,9 @@ SUBFAMILY_FAMILY = {
     "BUSINESS_TRANSFORMATION": "STRATEGY_TRANSFORMATION",
     "GTM_STRATEGY": "STRATEGY_TRANSFORMATION",
     "CORPORATE_DEVELOPMENT": "STRATEGY_TRANSFORMATION",
+    "TECHNOLOGY_STRATEGY": "STRATEGY_TRANSFORMATION",
     "PRODUCT_MARKETING": "PRODUCT_MARKETING",
+    "MARKETING_GENERAL": "MARKETING",
     "PROGRAM_MANAGEMENT": "PROGRAM_PROJECT_OPERATIONS",
     "PROJECT_MANAGEMENT": "PROGRAM_PROJECT_OPERATIONS",
     "BUSINESS_OPERATIONS": "PROGRAM_PROJECT_OPERATIONS",
@@ -68,7 +71,9 @@ _EVIDENCE = {
     "BUSINESS_TRANSFORMATION": "JD describes internal business transformation.",
     "GTM_STRATEGY": "JD describes go-to-market strategy.",
     "CORPORATE_DEVELOPMENT": "JD describes corporate development and acquisition evaluation.",
+    "TECHNOLOGY_STRATEGY": "JD describes internal technology or digital strategy.",
     "PRODUCT_MARKETING": "JD owns positioning, messaging, or product launch work.",
+    "MARKETING_GENERAL": "JD describes brand, consumer, or marketing strategy work.",
     "PROGRAM_MANAGEMENT": "JD describes program management.",
     "PROJECT_MANAGEMENT": "JD describes project management.",
     "BUSINESS_OPERATIONS": "JD describes business operations.",
@@ -115,6 +120,16 @@ _PHRASES: dict[str, tuple[str, ...]] = {
     ),
     "CORPORATE_STRATEGY": ("corporate strategy", "enterprise strategy", "internal strategy"),
     "BUSINESS_STRATEGY": ("business strategy", "business unit strategy"),
+    "TECHNOLOGY_STRATEGY": (
+        "technology strategy",
+        "tech strategy",
+        "it strategy",
+        "digital strategy",
+        "enterprise technology strategy",
+        "technology portfolio",
+        "digital roadmap",
+        "technology operating model",
+    ),
     "PRODUCT_MARKETING": (
         "product marketing",
         "product positioning",
@@ -122,6 +137,18 @@ _PHRASES: dict[str, tuple[str, ...]] = {
         "go-to-market launches",
         "sales enablement",
         "competitive intelligence",
+    ),
+    "MARKETING_GENERAL": (
+        "marketing strategy",
+        "brand management",
+        "brand strategy",
+        "brand planning",
+        "consumer marketing",
+        "consumer insights",
+        "campaign strategy",
+        "campaign development",
+        "integrated marketing",
+        "marketing planning",
     ),
     "PROGRAM_MANAGEMENT": ("program management", "program manager"),
     "PROJECT_MANAGEMENT": ("project management", "project manager"),
@@ -145,13 +172,20 @@ _INTERNAL = (
     "business unit strategy",
 )
 _CLIENT = ("client-facing", "client engagement", "case team", "for clients", "client project")
+_SALES = ("sales quota", "sales associate", "quota-carrying", "close revenue")
+_TECH_STRATEGY = (
+    "technology strategy",
+    "tech strategy",
+    "it strategy",
+    "digital strategy",
+    "enterprise technology strategy",
+)
 _OUTSIDE_TITLE = (
     "software engineer",
     "data scientist",
     "data science",
     "account executive",
     "human resources",
-    "brand marketing",
 )
 
 _CLASSIFY_SYSTEM = (
@@ -160,6 +194,8 @@ _CLASSIFY_SYSTEM = (
     "The job description wins when it conflicts with the discovery query. "
     "Do not use any candidate profile, resume, skills, visa, or preferences. "
     "Do not score fit. Do not rank the job. Do not invent facts. "
+    "MARKETING is general marketing, not product marketing. "
+    "TECHNOLOGY_STRATEGY is internal technology strategy, not technology consulting. "
     "Return only the allowed taxonomy. OTHER and UNKNOWN are allowed. "
     "Confidence is how sure the role label is, not whether someone should apply. "
     'Reply with JSON {"primary_family","subfamily","confidence","evidence"}.'
@@ -240,6 +276,24 @@ def _result(
     )
 
 
+def _separate_technology_and_marketing(jd: str, title_l: str, scores: dict[str, int]) -> None:
+    """Keep technology strategy, technology consulting, and product marketing apart."""
+    blob = f"{title_l}\n{jd}"
+    consulting = "technology consulting" in blob or "it consulting" in blob
+    strategy = any(phrase in blob for phrase in _TECH_STRATEGY)
+    client = any(phrase in blob for phrase in _CLIENT)
+    if consulting:
+        scores.pop("MANAGEMENT_CONSULTING", None)
+        scores["TECHNOLOGY_CONSULTING"] = max(scores.get("TECHNOLOGY_CONSULTING", 0), 5)
+        scores.pop("TECHNOLOGY_STRATEGY", None)
+    elif strategy and not client:
+        scores.pop("TECHNOLOGY_CONSULTING", None)
+        scores.pop("MANAGEMENT_CONSULTING", None)
+        scores["TECHNOLOGY_STRATEGY"] = max(scores.get("TECHNOLOGY_STRATEGY", 0), 5)
+    if "product marketing" in blob or "sales enablement" in jd or "competitive intelligence" in jd:
+        scores.pop("MARKETING_GENERAL", None)
+
+
 def _score_blob(blob: str, weight: int, scores: dict[str, int]) -> None:
     for subfamily, phrases in _PHRASES.items():
         if any(phrase in blob for phrase in phrases):
@@ -273,10 +327,13 @@ def _deterministic(
         scores["OTHER"] = scores.get("OTHER", 0) + 6
     if any(phrase in title_l for phrase in _OUTSIDE_TITLE) or "write production software" in jd:
         scores["OTHER"] = scores.get("OTHER", 0) + 6
+    if any(phrase in title_l or phrase in jd for phrase in _SALES):
+        scores["OTHER"] = scores.get("OTHER", 0) + 6
     if any(phrase in jd for phrase in _INTERNAL) and not any(phrase in jd for phrase in _CLIENT):
         for subfamily in list(scores):
             if SUBFAMILY_FAMILY.get(subfamily) == "CONSULTING":
                 scores.pop(subfamily, None)
+    _separate_technology_and_marketing(jd, title_l, scores)
 
     if not scores:
         if len(description.strip()) < 80:

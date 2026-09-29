@@ -28,6 +28,7 @@ EXPECTED = {
     "STRATEGY_TRANSFORMATION": 15,
     "PRODUCT_MARKETING": 5,
     "PROGRAM_PROJECT_OPERATIONS": 5,
+    "MARKETING": 5,
     "OTHER": 5,
     "UNKNOWN": 5,
 }
@@ -63,7 +64,7 @@ def test_subfamilies_inherit_the_primary_family_weight() -> None:
 
 def test_seven_weights_are_not_required_to_sum_to_100() -> None:
     loaded = load_role_family_weights()
-    assert sum(loaded.values()) == 115
+    assert sum(loaded.values()) == 120
 
 
 def test_discovery_capacity_stays_independent() -> None:
