@@ -200,7 +200,9 @@ async def test_short_text_fails_open_without_embed(
     )
     assert embedder.calls == []
     assert summary.vector_errors == 0
-    assert summary.scored == 1
+    assert client.calls == []
+    assert summary.scored == 0
+    assert summary.skipped == 1
 
 
 async def test_embedder_failure_scores_anyway(

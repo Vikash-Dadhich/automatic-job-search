@@ -44,6 +44,14 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "role_evidence",
         "role_classifier_version",
         "role_content_hash",
+        "fit_confidence",
+        "fit_strengths",
+        "fit_gaps",
+        "fit_evidence",
+        "fit_dimensions",
+        "fit_version",
+        "fit_content_hash",
+        "fit_profile_hash",
     } <= names
 
     await init_db()

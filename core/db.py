@@ -107,6 +107,14 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "fit_confidence": "VARCHAR(16)",
+        "fit_strengths": "JSON",
+        "fit_gaps": "JSON",
+        "fit_evidence": "JSON",
+        "fit_dimensions": "JSON",
+        "fit_version": "VARCHAR(32)",
+        "fit_content_hash": "VARCHAR(64)",
+        "fit_profile_hash": "VARCHAR(64)",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -131,6 +139,14 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "fit_confidence": "VARCHAR(16)",
+        "fit_strengths": "JSON",
+        "fit_gaps": "JSON",
+        "fit_evidence": "JSON",
+        "fit_dimensions": "JSON",
+        "fit_version": "VARCHAR(32)",
+        "fit_content_hash": "VARCHAR(64)",
+        "fit_profile_hash": "VARCHAR(64)",
     },
 }
 
@@ -205,6 +221,18 @@ class Job(SQLModel, table=True):
     role_evidence: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     role_classifier_version: str | None = Field(default=None, max_length=32)
     role_content_hash: str | None = Field(default=None, max_length=64)
+    # Candidate-to-JD fit. `score` stays the compatibility value when fit is available.
+    fit_confidence: str | None = Field(default=None, max_length=16)
+    fit_strengths: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    fit_gaps: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    fit_evidence: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    fit_dimensions: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    fit_version: str | None = Field(default=None, max_length=32)
+    fit_content_hash: str | None = Field(default=None, max_length=64)
+    fit_profile_hash: str | None = Field(default=None, max_length=64)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -619,6 +647,14 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.role_evidence = None
         existing.role_classifier_version = None
         existing.role_content_hash = None
+        existing.fit_confidence = None
+        existing.fit_strengths = None
+        existing.fit_gaps = None
+        existing.fit_evidence = None
+        existing.fit_dimensions = None
+        existing.fit_version = None
+        existing.fit_content_hash = None
+        existing.fit_profile_hash = None
     if job.role_family is not None and (
         content_changed
         or not _role_classification_current(existing)

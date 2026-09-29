@@ -51,8 +51,7 @@ from scorer.embeddings import (
 )
 from scorer.outreach import generate_outreach as draft_outreach
 from scorer.prerank import prerank_jobs
-from scorer.prompts import build_scoring_system_blocks, build_scoring_user
-from scorer.schemas import SCORE_JSON_SCHEMA, Evaluation, ScoreRaw
+from scorer.schemas import Evaluation, ScoreRaw
 from scraper.filters import evaluate_job
 
 # Re-exported so callers and tests keep importing the client layer from scorer.engine.
@@ -566,20 +565,32 @@ class Scorer:
                     cover_letter=None,
                 )
 
-        system_blocks = build_scoring_system_blocks(profile)
-        user = build_scoring_user(job)
-        raw_text = await client.complete(
+        from scorer.fit import evaluate_fit
+
+        decision = await evaluate_fit(
+            job,
+            profile,
+            client,
             model=settings.active_scorer_model,
-            system_blocks=system_blocks,
-            user=user,
             max_tokens=settings.score_max_tokens,
-            temperature=0.0,
-            json_mode=True,
-            json_schema=SCORE_JSON_SCHEMA,
-            thinking_level=settings.gemini_scorer_thinking_level,
         )
-        raw = parse_score(raw_text)
-        tier = compute_tier(raw.s, job.company, profile)
+        if not decision.available or decision.score is None:
+            return Evaluation(
+                score=0,
+                tier=Tier.three,
+                reasons=decision.evidence,
+                outreach=None,
+                cover_letter=None,
+                fit_available=False,
+                fit_confidence=decision.confidence,
+                fit_strengths=decision.strengths,
+                fit_gaps=decision.gaps,
+                fit_evidence=decision.evidence,
+                fit_dimensions=decision.dimensions,
+                fit_content_hash=decision.content_hash,
+                fit_profile_hash=decision.profile_hash,
+            )
+        tier = compute_tier(decision.score, job.company, profile)
         outreach: str | None = None
         if generate_outreach and tier == Tier.one:
             # A failed draft must not discard a valid score: outreach is a bonus,
@@ -597,11 +608,18 @@ class Scorer:
                 log.warning("cover_letter_failed", job_id=job.id, error=str(exc)[:200])
 
         return Evaluation(
-            score=raw.s,
+            score=decision.score,
             tier=tier,
-            reasons=raw.r,
+            reasons=decision.evidence or decision.strengths,
             outreach=outreach,
             cover_letter=cover_letter,
+            fit_confidence=decision.confidence,
+            fit_strengths=decision.strengths,
+            fit_gaps=decision.gaps,
+            fit_evidence=decision.evidence,
+            fit_dimensions=decision.dimensions,
+            fit_content_hash=decision.content_hash,
+            fit_profile_hash=decision.profile_hash,
         )
 
     async def _score_and_persist(
@@ -633,6 +651,20 @@ class Scorer:
                 if target is None:
                     return _JobOutcome(kind="error", detail=f"job {job.id} missing")
 
+                if not evaluation.fit_available:
+                    target.fit_confidence = evaluation.fit_confidence
+                    target.fit_strengths = evaluation.fit_strengths
+                    target.fit_gaps = evaluation.fit_gaps
+                    target.fit_evidence = evaluation.fit_evidence
+                    target.fit_dimensions = evaluation.fit_dimensions or None
+                    target.fit_version = "phase6-v1"
+                    target.fit_content_hash = evaluation.fit_content_hash
+                    target.fit_profile_hash = evaluation.fit_profile_hash
+                    target.justification = evaluation.reasons
+                    target.updated_at = now
+                    session.add(target)
+                    return _JobOutcome(kind="unavailable", job_id=job.id)
+
                 target.score = evaluation.score
                 target.tier = evaluation.tier
                 target.justification = evaluation.reasons or [
@@ -642,6 +674,14 @@ class Scorer:
                 target.cover_letter = evaluation.cover_letter
                 target.scored_at = now
                 target.status = new_status
+                target.fit_confidence = evaluation.fit_confidence
+                target.fit_strengths = evaluation.fit_strengths or None
+                target.fit_gaps = evaluation.fit_gaps or None
+                target.fit_evidence = evaluation.fit_evidence or None
+                target.fit_dimensions = evaluation.fit_dimensions or None
+                target.fit_version = "phase6-v1"
+                target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
+                target.fit_profile_hash = evaluation.fit_profile_hash
                 target.updated_at = now
                 session.add(target)
 
@@ -772,6 +812,9 @@ class Scorer:
                 summary.errors += 1
                 if outcome.detail:
                     summary.error_details.append(outcome.detail)
+                continue
+            if outcome.kind == "unavailable":
+                summary.skipped += 1
                 continue
             summary.scored += 1
             if outcome.job_id is not None:
