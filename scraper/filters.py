@@ -282,11 +282,10 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
         if contains_phrase(haystack, keyword):
             return FilterResult(False, f"excluded keyword: {keyword}")
 
-    # Clearance hard gate
-    if exclusions.clearance_required:
-        for pattern in _CLEARANCE_PATTERNS:
-            if re.search(pattern, haystack, re.IGNORECASE):
-                return FilterResult(False, f"clearance required matched: {pattern}")
+    # Clearance is a hard rejection only when the posting requires it.
+    # "Preferred" or a bare mention is not a confirmed disqualifier.
+    if exclusions.clearance_required and clearance_requirement(haystack) == "required":
+        return FilterResult(False, "clearance required")
 
     # Third-party staffing
     if exclusions.third_party_staffing:
@@ -332,10 +331,12 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
         if has_seniority:
             return FilterResult(False, f"internship_only: seniority word in title: {posting.title}")
 
-    # Seniority mismatch (title-only — avoid matching inside descriptions)
-    seniority = _seniority_reason(posting.title or "")
-    if seniority:
-        return FilterResult(False, seniority)
+    # An explicit intern/internship title is not dropped for VP/director wording.
+    # Softer signals such as "new grad" still go through the seniority gate.
+    if not _INTERN_WORD_RE.search(posting.title or ""):
+        seniority = _seniority_reason(posting.title or "")
+        if seniority:
+            return FilterResult(False, seniority)
 
     # YOE gate, scaled to the candidate's own experience
     yoe = _yoe_reason(haystack, profile)
