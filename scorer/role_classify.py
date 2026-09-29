@@ -224,13 +224,15 @@ def _result(
         return _unknown(content_hash, "Classifier returned a label outside the taxonomy.")
     if subfamily is not None and SUBFAMILY_FAMILY.get(subfamily) != family:
         return _unknown(content_hash, "Classifier returned a subfamily outside its family.")
+    if confidence not in {"high", "medium", "low"}:
+        return _unknown(content_hash, "Classifier returned a label outside the taxonomy.")
     cleaned = [line.strip() for line in evidence if line and line.strip()][:4]
     if not cleaned:
         cleaned = [_EVIDENCE.get(subfamily or family, _EVIDENCE["UNKNOWN"])]
     return RoleClassification(
         role_family=family,
         role_subfamily=subfamily,
-        role_confidence=confidence if confidence in {"high", "medium", "low"} else "low",
+        role_confidence=confidence,
         role_evidence=cleaned,
         role_classifier_version=ROLE_CLASSIFIER_VERSION,
         role_content_hash=content_hash,

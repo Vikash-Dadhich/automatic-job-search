@@ -263,6 +263,25 @@ async def test_invalid_model_output_falls_back_to_unknown() -> None:
         assert client.calls == 1
 
 
+async def test_invalid_confidence_is_unknown() -> None:
+    client = _FakeClient(
+        '{"primary_family":"CONSULTING","subfamily":"BUSINESS_CONSULTING",'
+        '"confidence":"extremely_sure","evidence":["JD describes business consulting."]}'
+    )
+    result = await classify_role(
+        title="Intern",
+        description=_jd("Help the team and attend meetings during the summer internship."),
+        content_hash="bad-confidence",
+        client=client,
+    )
+    assert result.role_family == "UNKNOWN"
+    assert result.role_subfamily is None
+    assert result.role_confidence == "low"
+    assert result.role_classifier_version == ROLE_CLASSIFIER_VERSION
+    assert result.role_content_hash == "bad-confidence"
+    assert client.calls == 1
+
+
 async def test_valid_model_output_is_accepted_when_rules_do_not_decide() -> None:
     client = _FakeClient(
         '{"primary_family":"CONSULTING","subfamily":"BUSINESS_CONSULTING",'
