@@ -62,7 +62,11 @@ _FACT_FIELDS = (
     "company_type",
     "business_description",
 )
-_WORD_RE = re.compile(r"[^A-Za-z0-9]+")
+_SUFFIX_ALT = "|".join(sorted(_LEGAL_SUFFIXES, key=len, reverse=True))
+_TRAILING_SUFFIX_RE = re.compile(
+    rf"[\s,]+(?:{_SUFFIX_ALT})\.?[\s.,]*$",
+    re.IGNORECASE,
+)
 _PUBLIC_RE = re.compile(r"\b(?:publicly traded|public company)\b", re.IGNORECASE)
 _PRIVATE_RE = re.compile(r"\b(?:privately held|private company)\b", re.IGNORECASE)
 _HQ_RE = re.compile(r"\bheadquartered in ([^.]+)", re.IGNORECASE)
@@ -80,24 +84,27 @@ _SELF_RE = re.compile(r"\bdescribes itself as ([^.]+)", re.IGNORECASE)
 
 
 def normalize_company_name(name: str | None) -> str:
-    """Lookup key: trimmed, lowercased, trailing legal suffixes removed.
+    """Lookup key: trimmed, lowercased, trailing legal suffix removed.
 
-    Interior words stay. ``Mercury`` and ``Mercury Systems`` remain different.
+    Interior punctuation stays. ``AT&T`` stays ``at&t``. ``Mercury`` and
+    ``Mercury Systems`` stay different.
     """
-    return " ".join(word.lower() for word in _significant_words(name))
+    return _without_trailing_suffix(name).lower()
 
 
 def canonical_company_name(name: str | None) -> str:
-    """Display form of the lookup key, keeping the source casing of each word."""
-    return " ".join(_significant_words(name))
+    """Display form of the lookup key, keeping the source casing."""
+    return _without_trailing_suffix(name)
 
 
-def _significant_words(name: str | None) -> list[str]:
-    collapsed = re.sub(r"\s+", " ", (name or "").strip())
-    words = [word for word in _WORD_RE.split(collapsed) if word]
-    while words and words[-1].casefold() in _LEGAL_SUFFIXES:
-        words.pop()
-    return words
+def _without_trailing_suffix(name: str | None) -> str:
+    text = re.sub(r"\s+", " ", (name or "").strip())
+    while True:
+        updated = _TRAILING_SUFFIX_RE.sub("", text).strip()
+        updated = re.sub(r"\s+", " ", updated).strip()
+        if updated == text:
+            return text
+        text = updated
 
 
 def extract_company_facts(text: str) -> dict[str, Any]:
@@ -162,7 +169,12 @@ class CompanyLookupResult:
 
 
 class CompanyIntelProvider(Protocol):
-    async def lookup(self, company_name: str, source_url: str) -> CompanyLookupResult:
+    async def lookup(
+        self,
+        company_name: str,
+        source_url: str,
+        source_type: str = "official_website",
+    ) -> CompanyLookupResult:
         """Fetch one explicit source URL. Do not search or invent a domain."""
         ...
 
@@ -173,7 +185,12 @@ class HttpCompanyIntelProvider:
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client
 
-    async def lookup(self, company_name: str, source_url: str) -> CompanyLookupResult:
+    async def lookup(
+        self,
+        company_name: str,
+        source_url: str,
+        source_type: str = "official_website",
+    ) -> CompanyLookupResult:
         del company_name
         url = _reliable_source_url(source_url)
         if url is None:
@@ -198,7 +215,7 @@ class HttpCompanyIntelProvider:
             return CompanyLookupResult(error="malformed")
         return CompanyLookupResult(
             document=CompanySourceDocument(
-                source_type="official_website",
+                source_type=_source_type(source_type),
                 url=url,
                 text=text,
                 retrieved_at=datetime.now(UTC),
@@ -310,7 +327,7 @@ async def resolve_company(
         return row
 
     try:
-        looked_up = await provider.lookup(company_name, url)
+        looked_up = await provider.lookup(company_name, url, kind)
     except Exception as exc:
         log.warning(
             "company_intelligence_provider_failure",

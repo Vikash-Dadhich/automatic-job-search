@@ -49,7 +49,12 @@ class FakeProvider:
         self.claimed: dict[str, object] | None = None
         self.raise_exc: Exception | None = None
 
-    async def lookup(self, company_name: str, source_url: str) -> CompanyLookupResult:
+    async def lookup(
+        self,
+        company_name: str,
+        source_url: str,
+        source_type: str = "official_website",
+    ) -> CompanyLookupResult:
         del company_name
         self.calls += 1
         if self.raise_exc is not None:
@@ -58,7 +63,7 @@ class FakeProvider:
             return CompanyLookupResult(error=self.error)
         return CompanyLookupResult(
             document=CompanySourceDocument(
-                source_type="official_website",
+                source_type=source_type,
                 url=source_url,
                 text=self.text,
                 retrieved_at=RETRIEVED,
@@ -75,12 +80,19 @@ def test_normalization_is_deterministic() -> None:
 
 def test_legal_suffixes_do_not_collapse_distinct_names() -> None:
     assert normalize_company_name("Acme, Inc.") == "acme"
+    assert normalize_company_name("Acme Inc") == "acme"
+    assert normalize_company_name("  ACME, LLC ") == "acme"
     assert normalize_company_name("Acme LLC") == "acme"
     assert normalize_company_name("Mercury") == "mercury"
     assert normalize_company_name("Mercury Systems") == "mercury systems"
     assert normalize_company_name("Mercury Insurance") == "mercury insurance"
     assert normalize_company_name("Mercury") != normalize_company_name("Mercury Systems")
-    assert normalize_company_name("Mercury Systems") != normalize_company_name("Mercury Insurance")
+    assert normalize_company_name("Mercury Systems") != normalize_company_name(
+        "Mercury Insurance"
+    )
+    assert normalize_company_name("AT&T") == "at&t"
+    assert normalize_company_name("Johnson & Johnson") == "johnson & johnson"
+    assert normalize_company_name("A.B. Corp") == "a.b."
 
 
 def test_extractor_keeps_unstated_facts_null() -> None:
@@ -407,11 +419,52 @@ async def test_http_provider_handles_timeout_and_malformed_pages() -> None:
         return httpx.Response(200, text=page)
 
     ok_client = httpx.AsyncClient(transport=httpx.MockTransport(ok))
-    fetched = await HttpCompanyIntelProvider(ok_client).lookup("Acme", "https://acme.example/about")
+    fetched = await HttpCompanyIntelProvider(ok_client).lookup(
+        "Acme",
+        "https://acme.example/about",
+        "official_website",
+    )
     await ok_client.aclose()
     assert fetched.document is not None
+    assert fetched.document.source_type == "official_website"
     assert fetched.document.url == "https://acme.example/about"
     facts = extract_company_facts(fetched.document.text)
     assert facts["public_private"] == "private"
     assert facts["headquarters"] == "Austin"
     assert facts["employee_range"] is None
+
+
+async def test_http_provider_keeps_the_caller_source_type() -> None:
+    page = "<html><body><p>Acme is a publicly traded software company.</p></body></html>"
+
+    def ok(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, text=page)
+
+    for source_type, url in (
+        ("official_website", "https://acme.example/about"),
+        ("sec", "https://www.sec.gov/Archives/edgar/data/1/acme.htm"),
+        ("regulatory", "https://www.sec.gov/cgi-bin/browse-edgar"),
+        ("careers", "https://careers.acme.example/about"),
+    ):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(ok))
+        result = await HttpCompanyIntelProvider(client).lookup("Acme", url, source_type)
+        await client.aclose()
+        assert result.document is not None
+        assert result.document.source_type == source_type
+        assert result.document.url == url
+
+
+async def test_persisted_source_type_matches_the_caller(db_ready: Path) -> None:
+    provider = FakeProvider()
+    async with session_scope() as session:
+        record = await resolve_company(
+            session,
+            "Acme",
+            source_url="https://www.sec.gov/Archives/edgar/data/1/acme.htm",
+            source_type="sec",
+            provider=provider,
+        )
+    assert record.sources[0]["source_type"] == "sec"
+    assert record.sources[0]["url"] == "https://www.sec.gov/Archives/edgar/data/1/acme.htm"
+    assert record.website is None
