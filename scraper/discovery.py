@@ -98,6 +98,7 @@ class DiscoveryConfig(BaseModel):
                 if bucket.enabled and not bucket.queries:
                     raise ValueError(f"enabled bucket {bucket.id} has no queries")
                 queries.extend(bucket.queries)
+                queries.extend(bucket.title_variants)
         if len(bucket_ids) != len(set(bucket_ids)):
             raise ValueError("search bucket ids must be unique")
         folded = [query.casefold() for query in queries]
@@ -260,9 +261,10 @@ def allocate_units(items: list[AllocItem], capacity: int) -> dict[str, int]:
 
 
 def _enabled_queries(bucket: SearchBucket) -> list[str]:
+    """Primary queries, then title variants. Both run once when the bucket is on."""
     if not bucket.enabled:
         return []
-    return list(bucket.queries)
+    return [*bucket.queries, *bucket.title_variants]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

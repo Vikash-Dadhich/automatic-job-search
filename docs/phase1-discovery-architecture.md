@@ -74,7 +74,7 @@ Each family has enabled buckets. Each enabled bucket has at least one query. The
 | Project Manager Intern | `PROJECT_MANAGEMENT` | Other |
 | Customer Success Intern | `OTHER_ADJACENT_MBA_ROLES` | Other |
 
-Buckets that had no migrated query have one starter phrase so the plan can execute them. Examples: `Technical Product Manager Intern`, `Product Strategy Intern`, `Strategy Consulting Intern`. Title variants are an empty slot for later vocabulary. They are not searched.
+Buckets that had no migrated query have one starter phrase so the plan can execute them. Examples: `Technical Product Manager Intern`, `Product Strategy Intern`, `Strategy Consulting Intern`. Title variants are alternate titles on the same bucket. Phase 2 searches them after the bucket's primary queries. See `docs/phase2-search-taxonomy.md`.
 
 `Strategy Intern` sits under corporate strategy. That is a placement choice, not a claim that every strategy internship is corporate strategy. Phase 2 can split the phrase.
 
@@ -96,7 +96,7 @@ With a request of 100 and enough queries in every family, the split is 40 / 40 /
 
 Spillover is search capacity a family could not use, which was then given to other families. It is not unused fit, a weak embedding, or a low tier.
 
-A request larger than the whole query catalog is unavailable capacity. The current catalog has 19 queries. A request of 100 still runs those 19 searches. The other 81 units are not spillover. The plan records requested 100, usable 19, allocated 19, spillover 0.
+A request larger than the whole query catalog is unavailable capacity. For example, a 19-query catalog and a request of 100 still runs those 19 searches. The other 81 units are not spillover. The plan records requested 100, usable 19, allocated 19, spillover 0.
 
 Spillover is the other case: the catalog can fill the request, but one family has fewer queries than its share. Request 100, Other has only 2 queries, and the other families have room. Other's unused 3 units move to Product Management, Consulting, and Strategy / Transformation. The result is 41 / 41 / 16 / 2, and the plan records spillover 3.
 
@@ -137,4 +137,4 @@ A production run logs `discovery_plan` with requested capacity, usable capacity,
 
 ## What Phase 2 will do
 
-Phase 2 will expand and refine the search taxonomy and vocabulary: more phrases per bucket, title variants that should actually be searched, and a review of whether starter queries and the `Strategy Intern` placement are the right recall set. The discovery engine should not need to be rewritten to add those phrases.
+Phase 2 expanded the search vocabulary on this same plan. The phrases, title variants, and ambiguous-query placements are in `docs/phase2-search-taxonomy.md`. The discovery engine was not rewritten to add them.

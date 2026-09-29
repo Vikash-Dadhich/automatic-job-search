@@ -1,8 +1,9 @@
 # Discovery strategy. Family weights are search capacity, not fit scores.
-# Phase 2 expands the query vocabulary. Do not treat this file as a ranking rubric.
+# Phrases are for recall. Later stages decide whether a job actually fits.
 #
-# Source parameters (location, results_wanted, hours_old, Workday URLs) stay in
-# config/targets.yaml. This file only says which families, buckets, and sources exist.
+# queries: primary search phrases for the bucket.
+# title_variants: close title wordings searched after those queries.
+# Source parameters stay in config/targets.yaml.
 
 families:
   - id: PRODUCT_MANAGEMENT
@@ -13,28 +14,55 @@ families:
       - id: PM_CORE
         name: Product manager
         enabled: true
+        # "Product Intern" is intentionally broad. Many internships use it
+        # for product management and do not say "manager".
         queries:
           - "Product Manager Intern"
+          - "Product Management Intern"
+          - "Product Intern"
+        title_variants:
+          - "Product Lead Intern"
+          - "Product Management Associate Intern"
+
       - id: APM_MBA_PM
         name: MBA and associate product
         enabled: true
         queries:
           - "MBA Product Manager Intern"
+          - "MBA Product Management Intern"
+          - "Associate Product Manager Intern"
+          - "Product Management MBA Intern"
+        title_variants:
+          - "APM Intern"
+          - "Product Manager MBA Intern"
+
       - id: TECHNICAL_PRODUCT
         name: Technical product
         enabled: true
         queries:
           - "Technical Product Manager Intern"
+          - "Digital Product Manager Intern"
+          - "Platform Product Manager Intern"
+        title_variants:
+          - "Technical Product Management Intern"
+          - "Digital Product Management Intern"
+          - "Platform Product Management Intern"
+
       - id: PRODUCT_STRATEGY
         name: Product strategy
         enabled: true
         queries:
           - "Product Strategy Intern"
+          - "Product Strategy MBA Intern"
+
       - id: PRODUCT_OPERATIONS
         name: Product operations
         enabled: true
         queries:
           - "Product Operations Intern"
+          - "Product Operations MBA Intern"
+          - "Product Development Intern"
+          - "Product Innovation Intern"
 
   - id: CONSULTING
     name: Consulting
@@ -44,28 +72,56 @@ families:
       - id: MANAGEMENT_CONSULTING
         name: Management consulting
         enabled: true
+        # "Consulting Intern" and "Advisory Intern" are intentionally broad.
+        # Firms often omit "management". Later classification separates noise.
         queries:
           - "Management Consultant Intern"
+          - "Management Consulting Intern"
+          - "Consulting Intern"
+          - "MBA Consulting Intern"
+          - "Advisory Intern"
+        title_variants:
+          - "Consulting Summer Intern"
+          - "Summer Consulting Intern"
+          - "MBA Consultant Intern"
+          - "Management Advisory Intern"
+
       - id: STRATEGY_CONSULTING
         name: Strategy consulting
         enabled: true
         queries:
           - "Strategy Consulting Intern"
+          - "Strategy Consultant Intern"
+        title_variants:
+          - "Strategy & Operations Consulting Intern"
+
       - id: TECHNOLOGY_CONSULTING
         name: Technology consulting
         enabled: true
         queries:
           - "Technology Consulting Intern"
+          - "Technology Consultant Intern"
+          - "Digital Consulting Intern"
+        title_variants:
+          - "Technology Advisory Intern"
+
       - id: BUSINESS_CONSULTING
         name: Business consulting
         enabled: true
         queries:
           - "Business Consulting Intern"
+          - "Business Consultant Intern"
+        title_variants:
+          - "Business Advisory Intern"
+
       - id: TRANSFORMATION_CONSULTING
         name: Transformation consulting
         enabled: true
         queries:
           - "Transformation Consulting Intern"
+          - "Transformation Consultant Intern"
+          - "Digital Transformation Consulting Intern"
+          - "Business Transformation Consulting Intern"
 
   - id: STRATEGY_TRANSFORMATION
     name: Strategy / Transformation
@@ -75,28 +131,61 @@ families:
       - id: CORPORATE_STRATEGY
         name: Corporate strategy
         enabled: true
+        # "Strategy Intern" is intentionally broad so untitled strategy
+        # internships are not missed.
+        # "Corporate Development Intern" is adjacent. Corporate roles often
+        # match this search; banking and investing uses of the same words
+        # are left for later classification.
         queries:
           - "Strategy Intern"
+          - "Corporate Strategy Intern"
+          - "MBA Strategy Intern"
+          - "Enterprise Strategy Intern"
+          - "Growth Strategy Intern"
+          - "Corporate Development Intern"
+        title_variants:
+          - "Growth Strategy MBA Intern"
+
       - id: BUSINESS_STRATEGY
         name: Business strategy
         enabled: true
         queries:
           - "Business Strategy Intern"
+          - "Strategy & Operations Intern"
+          - "Strategy and Operations Intern"
+          - "MBA Strategy & Operations Intern"
+          - "Commercial Strategy Intern"
+          - "Revenue Strategy Intern"
+        title_variants:
+          - "Operations Strategy Intern"
+          - "Strategic Operations Intern"
+
       - id: STRATEGIC_INITIATIVES
         name: Strategic initiatives
         enabled: true
         queries:
           - "Strategic Initiatives Intern"
+          - "Strategic Initiatives MBA Intern"
+          - "Strategic Planning Intern"
+          - "Strategic Planning MBA Intern"
+        title_variants:
+          - "Business Planning Intern"
+
       - id: BUSINESS_TRANSFORMATION
         name: Business transformation
         enabled: true
         queries:
           - "Business Transformation Intern"
+          - "Transformation Strategy Intern"
+          - "Transformation Management Intern"
+
       - id: GTM_STRATEGY
         name: Go-to-market strategy
         enabled: true
         queries:
           - "Go-to-Market Intern"
+          - "Go-to-Market Strategy Intern"
+          - "GTM Strategy Intern"
 
   - id: OTHER
     name: Other
@@ -108,21 +197,42 @@ families:
         enabled: true
         queries:
           - "Product Marketing Intern"
+          - "Product Marketing MBA Intern"
+          - "MBA Product Marketing Intern"
+        title_variants:
+          - "Product Marketing Manager Intern"
+          - "Technical Product Marketing Intern"
+
       - id: PROGRAM_MANAGEMENT
         name: Program management
         enabled: true
+        # "Program Manager Intern" is intentionally broad.
         queries:
           - "Program Manager Intern"
+          - "Program Management Intern"
+          - "MBA Program Management Intern"
+        title_variants:
+          - "Technical Program Manager Intern"
+          - "Technical Program Management Intern"
+          - "Strategic Program Intern"
+
       - id: PROJECT_MANAGEMENT
         name: Project management
         enabled: true
+        # "Project Manager Intern" is intentionally broad.
         queries:
           - "Project Manager Intern"
+          - "Project Management Intern"
+
       - id: OTHER_ADJACENT_MBA_ROLES
         name: Other adjacent MBA roles
         enabled: true
+        # Customer Success and Business Operations are intentionally broad
+        # and kept small. Sales, revenue, and generic operations stay out.
         queries:
           - "Customer Success Intern"
+          - "Customer Experience Intern"
+          - "Business Operations Intern"
 
 sources:
   - id: linkedin

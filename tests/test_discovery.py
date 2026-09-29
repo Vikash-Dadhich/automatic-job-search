@@ -17,6 +17,7 @@ from scraper.discovery import (
     SearchBucket,
     allocate_units,
     build_discovery_plan,
+    enabled_query_texts,
     load_discovery,
 )
 from scraper.models import RawPosting, to_job
@@ -72,6 +73,32 @@ def test_buckets_belong_to_families_and_ids_are_unique() -> None:
             assert bucket.id not in seen
             seen.add(bucket.id)
             assert bucket.queries
+
+
+def test_phase2_vocabulary_is_unique_and_searched() -> None:
+    config = load_discovery()
+    phrases = enabled_query_texts(config)
+    folded = [phrase.casefold() for phrase in phrases]
+    assert len(folded) == len(set(folded))
+    assert len(phrases) > 19
+    by_bucket = {
+        bucket.id: bucket
+        for family in config.families
+        for bucket in family.buckets
+    }
+    assert "Product Management Intern" in by_bucket["PM_CORE"].queries
+    assert "Product Lead Intern" in by_bucket["PM_CORE"].title_variants
+    assert "APM Intern" in by_bucket["APM_MBA_PM"].title_variants
+    assert "Consulting Intern" in by_bucket["MANAGEMENT_CONSULTING"].queries
+    assert "Corporate Development Intern" in by_bucket["CORPORATE_STRATEGY"].queries
+    assert "Strategy & Operations Intern" in by_bucket["BUSINESS_STRATEGY"].queries
+    assert "Business Operations Intern" in by_bucket["OTHER_ADJACENT_MBA_ROLES"].queries
+    plan = build_discovery_plan(load_targets())
+    searched = {item.query for item in plan.searches}
+    assert "Product Lead Intern" in searched
+    assert "MBA Strategy Intern" in searched
+    assert "GTM Strategy Intern" in searched
+    assert phrases == [item.query for item in plan.searches]
 
 
 def test_current_queries_were_migrated() -> None:
@@ -147,10 +174,12 @@ class _Targets:
 def test_global_shortage_is_not_spillover() -> None:
     load_targets.cache_clear()
     plan = build_discovery_plan(load_targets(), capacity=100)
+    catalog = sum(family.available for family in plan.families)
     assert plan.capacity_requested == 100
-    assert plan.capacity_usable == 19
-    assert plan.capacity_assigned == 19
-    assert len(plan.searches) == 19
+    assert catalog < 100
+    assert plan.capacity_usable == catalog
+    assert plan.capacity_assigned == catalog
+    assert len(plan.searches) == catalog
     assert plan.spillover == 0
     assert all(family.spillover == 0 for family in plan.families)
     full = build_discovery_plan(load_targets())
