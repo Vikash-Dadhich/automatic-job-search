@@ -63,6 +63,11 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "fit_content_hash",
         "fit_profile_hash",
         "canonical_url",
+        "priority_score",
+        "priority_version",
+        "priority_reasons",
+        "priority_components",
+        "priority_input_hash",
     } <= names
 
     await init_db()

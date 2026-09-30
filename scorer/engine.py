@@ -181,6 +181,16 @@ class _JobOutcome:
     detail: str | None = None
 
 
+def _attach_priority(job: Job, profile: Profile) -> None:
+    """Record attention order. A failure here does not change fit, tier, or status."""
+    try:
+        from scorer.priority import apply_priority
+
+        apply_priority(job, profile)
+    except Exception as exc:
+        log.warning("priority_failed", job_id=job.id, error=str(exc)[:200])
+
+
 def _hard_blocked(job: Job, profile: Profile, cooldown: set[str]) -> bool:
     """Hard negative or company cooldown. Those jobs are not embedded."""
     if not evaluate_job(job, profile).passed:
@@ -674,6 +684,7 @@ class Scorer:
                     target.fit_profile_hash = evaluation.fit_profile_hash
                     target.justification = evaluation.reasons
                     target.updated_at = now
+                    _attach_priority(target, profile)
                     session.add(target)
                     return _JobOutcome(kind="unavailable", job_id=job.id)
 
@@ -695,6 +706,7 @@ class Scorer:
                 target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
                 target.fit_profile_hash = evaluation.fit_profile_hash
                 target.updated_at = now
+                _attach_priority(target, profile)
                 session.add(target)
 
             if new_status == Status.staged:

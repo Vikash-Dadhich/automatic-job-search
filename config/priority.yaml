@@ -1,0 +1,42 @@
+# Attention order for jobs already stored. This is not a fit score and not a filter.
+# Each component is scaled to 0-100, then combined by these weights.
+# Weights are integers that sum to 100. A missing component is left out and the
+# remaining weights are rescaled, so missing evidence is not stored as zero.
+
+version: phase12-v1
+
+weights:
+  fit: 40
+  role_family: 12
+  eligibility: 20
+  role_confidence: 5
+  jd_quality: 6
+  freshness: 7
+  dream_company: 5
+  workflow: 5
+
+# How each raw signal maps onto 0-100 before weighting.
+scales:
+  eligibility:
+    CONFIRMED_ELIGIBLE: 100
+    LIKELY_ELIGIBLE: 80
+    UNKNOWN: 60
+    CLEARLY_INELIGIBLE: 0
+  role_confidence:
+    high: 100
+    medium: 70
+    low: 50
+  jd_quality:
+    present: 100
+    truncated: 55
+    suspicious: 40
+    missing: 40
+    unknown: 70
+  workflow:
+    open: 100
+    acted: 0
+    closed: 40
+  freshness:
+    # 100 today, falling to floor at horizon_days, then staying at floor.
+    floor: 40
+    horizon_days: 45

@@ -118,6 +118,11 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "eligibility_content_hash": "VARCHAR(64)",
         "eligibility_profile_hash": "VARCHAR(64)",
         "canonical_url": "VARCHAR(2048)",
+        "priority_score": "INTEGER",
+        "priority_version": "VARCHAR(32)",
+        "priority_reasons": "JSON",
+        "priority_components": "JSON",
+        "priority_input_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -161,6 +166,11 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "eligibility_content_hash": "VARCHAR(64)",
         "eligibility_profile_hash": "VARCHAR(64)",
         "canonical_url": "VARCHAR(2048)",
+        "priority_score": "INTEGER",
+        "priority_version": "VARCHAR(32)",
+        "priority_reasons": "JSON",
+        "priority_components": "JSON",
+        "priority_input_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -241,6 +251,15 @@ class Job(SQLModel, table=True):
     url: str = Field(max_length=2048)
     # Lookup key for the posting URL. Not unique: a homepage must not collapse jobs.
     canonical_url: str | None = Field(default=None, max_length=2048, index=True)
+    # Attention order. Separate from the Phase 6 fit score. Not a filter.
+    priority_score: int | None = Field(default=None, ge=0, le=100)
+    priority_version: str | None = Field(default=None, max_length=32)
+    priority_reasons: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    priority_components: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    priority_input_hash: str | None = Field(default=None, max_length=64)
     description_clean: str | None = Field(default=None)
     posted_at: datetime | None = _tz_datetime(nullable=True)
     discovered_at: datetime = _tz_datetime(default_factory=_utcnow)
