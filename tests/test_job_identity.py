@@ -12,7 +12,7 @@ from core.db import (
     session_scope,
     upsert_job,
 )
-from core.job_identity import canonicalize_job_url, same_posting_url
+from core.job_identity import canonicalize_job_url, same_posting_url, url_identifies_posting
 from scraper.models import RawPosting, to_job
 
 _DESC = "Own the product roadmap and write requirements for this internship. " * 3
@@ -61,6 +61,25 @@ def test_url_canonicalization_drops_tracking_and_keeps_posting_ids() -> None:
         "https://example.com/job/1"
     )
     assert same_posting_url("https://example.com/", "https://example.com/?utm_source=x") is False
+    assert url_identifies_posting(canonicalize_job_url("https://example.com/")) is False
+    assert (
+        url_identifies_posting(canonicalize_job_url("https://example.com/?utm_source=linkedin"))
+        is False
+    )
+    assert url_identifies_posting(canonicalize_job_url("https://example.com/?foo=bar")) is False
+    homepage_source = canonicalize_job_url("https://example.com/?source=linkedin")
+    assert url_identifies_posting(homepage_source) is False
+    assert url_identifies_posting(canonicalize_job_url("https://example.com/?id=123")) is True
+    assert (
+        url_identifies_posting(
+            canonicalize_job_url("https://example.com/?id=123&utm_source=linkedin")
+        )
+        is True
+    )
+    assert canonicalize_job_url("https://example.com/?id=123") != canonicalize_job_url(
+        "https://example.com/?id=456"
+    )
+    assert url_identifies_posting(canonicalize_job_url("https://example.com/?jobId=9")) is True
 
 
 async def test_same_source_identity_and_cross_source_url(db_ready: Path) -> None:
@@ -182,6 +201,33 @@ async def test_weak_similarity_does_not_merge(db_ready: Path) -> None:
             ),
         )
     assert google.id != other.id
+
+
+async def test_homepage_query_does_not_merge_across_sources(db_ready: Path) -> None:
+    del db_ready
+    async with session_scope() as session:
+        first = await upsert_job(
+            session,
+            to_job(
+                _posting(
+                    external_id="home-a",
+                    url="https://example.com/?foo=bar",
+                    location="Seattle, WA",
+                )
+            ),
+        )
+        second = await upsert_job(
+            session,
+            to_job(
+                _posting(
+                    source=Source.indeed,
+                    external_id="home-b",
+                    url="https://example.com/?foo=bar&utm_source=indeed",
+                    location=None,
+                )
+            ),
+        )
+    assert first.id != second.id
 
 
 async def test_same_place_and_text_can_merge_without_using_fit(db_ready: Path) -> None:

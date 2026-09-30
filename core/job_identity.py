@@ -73,15 +73,36 @@ def canonicalize_job_url(url: str | None) -> str | None:
     )
 
 
+_POSTING_ID_KEYS = frozenset(
+    {
+        "id",
+        "jobid",
+        "job_id",
+        "req",
+        "reqid",
+        "req_id",
+        "requisition",
+        "requisitionid",
+        "requisition_id",
+        "positionid",
+        "position_id",
+    }
+)
+
+
 def url_identifies_posting(canonical: str | None) -> bool:
-    """True when the URL is a posting, not a bare site homepage."""
+    """True when the URL is a posting, not a bare site homepage.
+
+    A homepage query counts only when a key is a posting id. ``foo`` and
+    ``source`` do not. A non-root path always does.
+    """
     if not canonical:
         return False
     parsed = urlparse(canonical)
     segments = [part for part in parsed.path.split("/") if part]
     if segments:
         return True
-    return bool(parse_qsl(parsed.query))
+    return any(key.lower() in _POSTING_ID_KEYS for key, _value in parse_qsl(parsed.query))
 
 
 def same_posting_url(left: str | None, right: str | None) -> bool:
