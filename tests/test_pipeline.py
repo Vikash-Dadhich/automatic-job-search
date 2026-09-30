@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 import orchestrator.pipeline as pipeline_mod
+from core.db import Status
 from orchestrator.pipeline import run_pipeline
 
 
@@ -27,6 +28,10 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     async def fake_score() -> _FakeSummary:
         order.append("scoring")
         return _FakeSummary("scoring")
+
+    async def fake_shortlist() -> dict[str, int]:
+        order.append("shortlist")
+        return {"selected": 0, "considered": 0, "already_pending": 0}
 
     async def fake_resume() -> _FakeSummary:
         order.append("resume")
@@ -66,7 +71,8 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(pipeline_mod, "_run_ingestion", fake_ingestion)
     monkeypatch.setattr(pipeline_mod, "_score_pending", fake_score)
-    monkeypatch.setattr(pipeline_mod, "_prepare_resumes", fake_resume)
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", fake_shortlist)
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", fake_resume)
     monkeypatch.setattr(pipeline_mod, "_generate_suggestions_stage", fake_suggest_gen)
     monkeypatch.setattr(pipeline_mod, "_send_pending_suggestions", fake_suggest_send)
     monkeypatch.setattr(pipeline_mod, "_benchmark_tier_one_stage", fake_benchmark)
@@ -86,6 +92,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     assert order == [
         "ingestion",
         "scoring",
+        "shortlist",
         "resume",
         "suggest_generate",
         "suggest_send",
@@ -99,6 +106,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     assert set(summary.stages) == {
         "ingestion",
         "scoring",
+        "shortlist",
         "resume",
         "suggest_generate",
         "suggest_send",
@@ -124,7 +132,8 @@ async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda: track("ingestion"))
     monkeypatch.setattr(pipeline_mod, "_score_pending", lambda: track("scoring"))
-    monkeypatch.setattr(pipeline_mod, "_prepare_resumes", lambda: track("resume"))
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: track("shortlist"))
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: track("resume"))
 
     async def boom() -> Any:
         raise AssertionError("should not run")
@@ -142,7 +151,7 @@ async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch)
         enable_suggestions=False,
         enable_benchmark=False,
     )
-    assert order == ["ingestion", "scoring", "resume"]
+    assert order == ["ingestion", "scoring", "shortlist", "resume"]
     assert summary.skipped == [
         "suggest_generate",
         "suggest_send",
@@ -173,7 +182,8 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda: ok("ingestion"))
     monkeypatch.setattr(pipeline_mod, "_score_pending", fail_score)
-    monkeypatch.setattr(pipeline_mod, "_prepare_resumes", lambda: ok("resume"))
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: ok("shortlist"))
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: ok("resume"))
     monkeypatch.setattr(
         pipeline_mod, "_generate_suggestions_stage", lambda: ok("suggest_generate")
     )
@@ -203,6 +213,7 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
     assert order == [
         "ingestion",
         "scoring",
+        "shortlist",
         "resume",
         "suggest_generate",
         "suggest_send",
@@ -217,3 +228,15 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
     assert "score boom" in summary.stage_errors["scoring"]
     assert "resume" in summary.stages
     assert not summary.ok
+
+
+async def test_pipeline_resume_uses_the_review_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_prepare(**kwargs: object) -> _FakeSummary:
+        seen.update(kwargs)
+        return _FakeSummary("resume")
+
+    monkeypatch.setattr(pipeline_mod, "_prepare_resumes", fake_prepare)
+    await pipeline_mod._prepare_shortlisted_resumes()
+    assert seen["status"] == Status.pending_review

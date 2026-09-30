@@ -419,8 +419,12 @@ async def prepare_pending(
     force: bool = False,
     out_dir: Path | None = None,
     base_resume: Path | None = None,
+    status: Status = Status.staged,
 ) -> ResumeSummary:
-    """Attach the best available resume to staged jobs missing resume_path.
+    """Attach the best available resume to jobs in one status that are missing resume_path.
+
+    The default remains staged. The pipeline passes pending_review after shortlist
+    so only the review queue is prepared on a normal run.
 
     Priority:
     1. Role baseline PDF (Typst-compiled from aggregated JDs) when one exists.
@@ -439,7 +443,7 @@ async def prepare_pending(
         log.warning("prepare_pending_missing_base", path=str(source))
 
     async with session_scope() as session:
-        jobs = await get_jobs_by_status(session, Status.staged, limit=limit)
+        jobs = await get_jobs_by_status(session, status, limit=limit)
 
     if not jobs:
         log.info("prepare_pending_empty")

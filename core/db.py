@@ -123,6 +123,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "priority_reasons": "JSON",
         "priority_components": "JSON",
         "priority_input_hash": "VARCHAR(64)",
+        "shortlist_version": "VARCHAR(32)",
+        "shortlist_rank": "INTEGER",
+        "shortlist_reason": "VARCHAR(64)",
+        "shortlist_config_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -171,6 +175,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "priority_reasons": "JSON",
         "priority_components": "JSON",
         "priority_input_hash": "VARCHAR(64)",
+        "shortlist_version": "VARCHAR(32)",
+        "shortlist_rank": "INTEGER",
+        "shortlist_reason": "VARCHAR(64)",
+        "shortlist_config_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -260,6 +268,11 @@ class Job(SQLModel, table=True):
         sa_column=Column(JSON, nullable=True),
     )
     priority_input_hash: str | None = Field(default=None, max_length=64)
+    # Review-queue membership. Separate from priority_score. Not a filter.
+    shortlist_version: str | None = Field(default=None, max_length=32)
+    shortlist_rank: int | None = Field(default=None, ge=1)
+    shortlist_reason: str | None = Field(default=None, max_length=64)
+    shortlist_config_hash: str | None = Field(default=None, max_length=64)
     description_clean: str | None = Field(default=None)
     posted_at: datetime | None = _tz_datetime(nullable=True)
     discovered_at: datetime = _tz_datetime(default_factory=_utcnow)

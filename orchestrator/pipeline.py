@@ -1,4 +1,4 @@
-"""Full pipeline: ingest, score, resume, suggest, prep, apply, reviews, outcomes, alerts."""
+"""Full pipeline: ingest, score, shortlist, resume, suggest, prep, apply, reviews."""
 
 from __future__ import annotations
 
@@ -28,6 +28,27 @@ log = structlog.get_logger(__name__)
 _run_ingestion = run_ingestion
 _score_pending = score_pending
 _prepare_resumes = prepare_pending
+
+
+async def _shortlist_stage() -> dict[str, int]:
+    """Move the current staged selection into pending_review."""
+    from scorer.shortlist import apply_shortlist
+
+    result = await apply_shortlist()
+    return {
+        "selected": result.selected,
+        "considered": result.considered,
+        "already_pending": result.already_pending,
+    }
+
+
+async def _prepare_shortlisted_resumes() -> Any:
+    """Prepare resumes for the review queue, not for every staged job."""
+    from core.db import Status
+
+    return await _prepare_resumes(status=Status.pending_review)
+
+
 _send_prep_pack = send_prep_pack
 _apply_pending = apply_pending
 _send_pending_reviews = send_pending_reviews
@@ -184,7 +205,8 @@ async def run_pipeline(
 
     await _run_stage(summary, "ingestion", _run_ingestion)
     await _run_stage(summary, "scoring", _score_pending)
-    await _run_stage(summary, "resume", _prepare_resumes)
+    await _run_stage(summary, "shortlist", _shortlist_stage)
+    await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
 
     if do_suggest:
         await _run_stage(summary, "suggest_generate", _generate_suggestions_stage)

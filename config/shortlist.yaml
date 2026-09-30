@@ -1,0 +1,11 @@
+# Which staged jobs enter the human review queue. This is not a score and not a filter.
+# Jobs that are not selected stay staged.
+
+version: phase13-v1
+
+shortlist:
+  max_size: 20
+  max_per_company: 2
+  # A different targeted family can replace the lowest selected job only when its
+  # priority is within this many points. Larger gaps do not lose a seat.
+  diversity_margin: 5
