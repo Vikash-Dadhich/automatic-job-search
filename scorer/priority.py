@@ -110,12 +110,17 @@ def fit_component(job: Job) -> int | None:
     return max(0, min(100, int(job.score)))
 
 
+def _half_up_ratio(numerator: int, denominator: int) -> int:
+    """Divide and round halves up. 5/40 of 100 is 12.5, which becomes 13."""
+    return (numerator + denominator // 2) // denominator
+
+
 def role_family_component(job: Job) -> int:
     """Portfolio weight scaled so the top family is 100. Not a fit score."""
     weights = load_role_family_weights()
     top = max(weights.values()) or 1
     raw = get_role_family_weight(job.role_family)
-    return max(0, min(100, round(raw * 100 / top)))
+    return max(0, min(100, _half_up_ratio(raw * 100, top)))
 
 
 def eligibility_component(job: Job, config: dict[str, Any]) -> int | None:
@@ -241,10 +246,18 @@ def _reasons(job: Job, components: dict[str, int | None]) -> list[str]:
     return lines
 
 
+def _freshness_day(now: datetime | None) -> str:
+    """UTC calendar date used as the freshness cache key. Not the clock time."""
+    moment = _as_utc(now) or datetime.now(UTC)
+    return moment.date().isoformat()
+
+
 def _input_hash(
     job: Job,
     profile: Profile,
     config: dict[str, Any],
+    *,
+    now: datetime | None = None,
 ) -> str:
     dreams = sorted(name.strip() for name in profile.preferences.dream_companies if name.strip())
     payload = {
@@ -263,18 +276,19 @@ def _input_hash(
         "company": job.company,
         "status": None if job.status is None else job.status.value,
         "dream_companies": dreams,
+        "freshness_day": _freshness_day(now),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def priority_is_current(job: Job, profile: Profile) -> bool:
+def priority_is_current(job: Job, profile: Profile, *, now: datetime | None = None) -> bool:
     config = load_priority_config()
     return bool(
         job.priority_score is not None
         and job.priority_version == PRIORITY_VERSION
         and job.priority_input_hash
-        and job.priority_input_hash == _input_hash(job, profile, config)
+        and job.priority_input_hash == _input_hash(job, profile, config, now=now)
         and job.priority_components
     )
 
@@ -294,7 +308,7 @@ def calculate_priority(
         version=PRIORITY_VERSION,
         reasons=_reasons(job, parts),
         components=parts,
-        input_hash=_input_hash(job, profile, config),
+        input_hash=_input_hash(job, profile, config, now=moment),
     )
 
 
@@ -304,8 +318,12 @@ def apply_priority(
     *,
     now: datetime | None = None,
 ) -> PriorityDecision:
-    """Store priority fields. Fit, eligibility, role, and status stay as they are."""
-    if priority_is_current(job, profile) and now is None:
+    """Store priority fields. Fit, eligibility, role, and status stay as they are.
+
+    The same UTC calendar day reuses the stored score. A later day recomputes
+    freshness. The hash stores that date, not the exact clock time.
+    """
+    if priority_is_current(job, profile, now=now):
         components = job.priority_components if isinstance(job.priority_components, dict) else {}
         return PriorityDecision(
             score=int(job.priority_score or 0),

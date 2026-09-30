@@ -19,12 +19,12 @@ Each component is 0–100. The weights in `config/priority.yaml` sum to 100. The
 | Dream company | Names listed on the profile | 100 if the existing company match hits, otherwise 0. An empty list is left out. |
 | Workflow | `status` | Open jobs 100. Submitted or ignored 0. Filtered or error 40. Status itself is not changed. |
 
-Role-family weight 40 scales to 100. Weight 15 scales to 38. Weight 5 scales to 13. Fit is not multiplied by 0.40.
+Role-family weight 40 scales to 100. Weight 15 scales to 38. Weight 5 scales to 13. Halves round up, so 12.5 is 13 and 37.5 is 38. Fit is not multiplied by 0.40.
 
 Discovery family, discovery query, vector similarity, company size, and company prestige are not inputs. Dream-company status is only the profile list, not a quality judgment.
 
 ## Version
 
-`phase12-v1` is stored with a hash of the inputs and the weight table. The same inputs reuse the stored priority. A changed fit number, role, eligibility, description flag, posted time, status, dream-company list, or weight table is computed again. Fit, eligibility, and role classification are not cleared because priority was computed.
+`phase12-v1` is stored with a hash of the inputs and the weight table. The same inputs on the same UTC calendar day reuse the stored priority. The hash includes that date as `freshness_day` and does not include the clock time, so a later hour on the same day does not recompute. The next UTC date does, and freshness is measured again from the posted or discovered time. A changed fit number, role, eligibility, description flag, posted time, status, dream-company list, or weight table is also computed again. Fit, eligibility, and role classification are not cleared because priority was computed.
 
 Ordering when scores tie is fit number, then posted or discovered time, then job id.

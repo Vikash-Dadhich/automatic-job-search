@@ -16,7 +16,6 @@ from scorer.priority import (
     role_family_component,
     sort_by_priority,
 )
-from scorer.role_weights import get_role_family_weight
 
 NOW = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
 
@@ -69,15 +68,38 @@ def test_fit_and_role_family_order_attention(profile: Profile) -> None:
     )
     other = _job("other", role_family="OTHER", role_subfamily=None, role_confidence="low")
     unknown = _job("unknown", role_family="UNKNOWN", role_confidence=None)
-    assert role_family_component(strong) > role_family_component(strategy)
-    assert role_family_component(strategy) > role_family_component(other)
-    assert role_family_component(unknown) == round(get_role_family_weight("UNKNOWN") * 100 / 40)
+    assert role_family_component(strong) == 100
+    assert role_family_component(strategy) == 38
+    assert role_family_component(other) == 13
+    assert role_family_component(unknown) == 13
     core = _job("core", role_subfamily="PM_CORE")
     technical = _job("tech", role_subfamily="TECHNICAL_PRODUCT")
-    assert role_family_component(core) == role_family_component(technical)
+    assert role_family_component(core) == 100
+    assert role_family_component(technical) == 100
     before = strong.score
     apply_priority(strong, profile, now=NOW)
     assert strong.score == before == 91
+
+
+def test_role_family_scale_is_half_up() -> None:
+    def scaled(family: str, subfamily: str | None = None) -> int:
+        return role_family_component(_job("scale", role_family=family, role_subfamily=subfamily))
+
+    assert scaled("PRODUCT_MANAGEMENT") == 100
+    assert scaled("CONSULTING") == 100
+    assert scaled("STRATEGY_TRANSFORMATION") == 38
+    assert scaled("OTHER") == 13
+    assert scaled("UNKNOWN") == 13
+    assert scaled("PRODUCT_MANAGEMENT", "PM_CORE") == 100
+    assert scaled("PRODUCT_MANAGEMENT", "TECHNICAL_PRODUCT") == 100
+    assert scaled("CONSULTING", "STRATEGY_CONSULTING") == 100
+    assert scaled("STRATEGY_TRANSFORMATION", "CORPORATE_STRATEGY") == 38
+    assert scaled("STRATEGY_TRANSFORMATION", "TECHNOLOGY_STRATEGY") == 38
+    assert scaled("MARKETING", "MARKETING_GENERAL") == 13
+    assert scaled("PRODUCT_MARKETING", "PRODUCT_MARKETING") == 13
+    assert scaled("PROGRAM_PROJECT_OPERATIONS", "PROGRAM_MANAGEMENT") == 13
+    blank = _job("blank", role_family=None, role_subfamily=None)
+    assert role_family_component(blank) == 13
 
 
 def test_eligibility_unknown_is_not_ineligible(profile: Profile) -> None:
@@ -203,12 +225,47 @@ async def test_priority_persists_and_reuses_until_inputs_change(
         assert components is not None and components["fit"] == 90
         assert saved.priority_reasons
         saved.priority_reasons = ["sentinel"]
-        assert priority_is_current(saved, profile)
-        second = apply_priority(saved, profile)
+        assert priority_is_current(saved, profile, now=NOW)
+        second = apply_priority(saved, profile, now=NOW + timedelta(hours=6))
         assert second.reasons == ["sentinel"]
         saved.eligibility_state = "CLEARLY_INELIGIBLE"
-        assert not priority_is_current(saved, profile)
+        assert not priority_is_current(saved, profile, now=NOW)
         third = apply_priority(saved, profile, now=NOW)
         assert third.score < first.score
         assert saved.score == 90
         assert saved.status == Status.staged
+
+
+async def test_freshness_cache_refreshes_on_a_later_utc_day(
+    db_ready: Path,
+    profile: Profile,
+) -> None:
+    del db_ready
+    async with session_scope() as session:
+        saved = await upsert_job(session, _job("aging"))
+        fit = saved.score
+        family = saved.role_family
+        confidence = saved.role_confidence
+        eligibility = saved.eligibility_state
+        status = saved.status
+        first = apply_priority(saved, profile, now=NOW)
+        stored = saved.priority_components
+        assert stored is not None and stored["freshness"] == 100
+        saved.priority_reasons = ["sentinel"]
+        same_day = apply_priority(saved, profile, now=NOW + timedelta(hours=6))
+        assert same_day.reasons == ["sentinel"]
+        assert same_day.components["freshness"] == 100
+        later = NOW + timedelta(days=20)
+        assert not priority_is_current(saved, profile, now=later)
+        second = apply_priority(saved, profile, now=later)
+        refreshed = saved.priority_components
+        assert refreshed is not None
+        freshness = refreshed["freshness"]
+        assert isinstance(freshness, int) and freshness < 100
+        assert second.components["freshness"] == freshness
+        assert second.input_hash != first.input_hash
+        assert saved.score == fit
+        assert saved.role_family == family
+        assert saved.role_confidence == confidence
+        assert saved.eligibility_state == eligibility
+        assert saved.status == status
