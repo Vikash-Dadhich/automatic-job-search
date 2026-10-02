@@ -456,6 +456,38 @@ class ApplicationEvent(SQLModel, table=True):
     created_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
+class FeedbackRun(SQLModel, table=True):
+    """One recomputation of empirical feedback. Raw history stays on applications."""
+
+    __tablename__: ClassVar[str] = "feedback_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    version: str = Field(max_length=32, index=True)
+    as_of: datetime = _tz_datetime()
+    config_hash: str = Field(max_length=64)
+    total_applications: int = Field(default=0, ge=0)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
+class FeedbackSignal(SQLModel, table=True):
+    """Derived counts and rates for one segment. Not a fit or priority score."""
+
+    __tablename__: ClassVar[str] = "feedback_signals"
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="feedback_runs.id", index=True)
+    dimension: str = Field(max_length=32, index=True)
+    segment: str = Field(max_length=64)
+    sample_size: int = Field(default=0, ge=0)
+    known_outcomes: int = Field(default=0, ge=0)
+    counts: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    rates: dict[str, float] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    baseline_rate: float | None = Field(default=None)
+    adjusted_rate: float | None = Field(default=None)
+    evidence_status: str = Field(max_length=32)
+    adjustment: int = Field(default=0)
+
+
 class RoleBaseline(SQLModel, table=True):
     """Per-role baseline resume built from aggregating ~15-20 JDs."""
 
@@ -1319,6 +1351,69 @@ async def get_application_events(
         select(ApplicationEvent)
         .where(col(ApplicationEvent.application_id) == application_id)
         .order_by(col(ApplicationEvent.occurred_at), col(ApplicationEvent.id))
+    )
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def list_submitted_applications(session: AsyncSession) -> list[Application]:
+    """Applications that have a submission time. The caller applies the cutoff."""
+    statement = select(Application).where(col(Application.submitted_at).is_not(None))
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def list_events_for_applications(
+    session: AsyncSession,
+    application_ids: list[int],
+) -> list[ApplicationEvent]:
+    if not application_ids:
+        return []
+    statement = select(ApplicationEvent).where(
+        col(ApplicationEvent.application_id).in_(application_ids)
+    )
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def list_jobs_by_ids(session: AsyncSession, job_ids: list[int]) -> list[Job]:
+    if not job_ids:
+        return []
+    statement = select(Job).where(col(Job.id).in_(job_ids))
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def save_feedback_run(
+    session: AsyncSession,
+    run: FeedbackRun,
+    signals: list[FeedbackSignal],
+) -> FeedbackRun:
+    session.add(run)
+    await session.flush()
+    for signal in signals:
+        signal.run_id = run.id or 0
+        session.add(signal)
+    return run
+
+
+async def get_feedback_run(session: AsyncSession, run_id: int) -> FeedbackRun | None:
+    statement = select(FeedbackRun).where(col(FeedbackRun.id) == run_id)
+    result = await session.exec(statement)
+    return result.first()
+
+
+async def get_latest_feedback_run(session: AsyncSession) -> FeedbackRun | None:
+    statement = select(FeedbackRun).order_by(col(FeedbackRun.id).desc())
+    result = await session.exec(statement)
+    return result.first()
+
+
+async def get_feedback_signals(session: AsyncSession, run_id: int) -> list[FeedbackSignal]:
+    statement = (
+        select(FeedbackSignal)
+        .where(col(FeedbackSignal.run_id) == run_id)
+        .order_by(col(FeedbackSignal.dimension), col(FeedbackSignal.segment))
     )
     result = await session.exec(statement)
     return list(result.all())
