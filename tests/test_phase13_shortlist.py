@@ -8,7 +8,21 @@ from typing import Any
 
 import pytest
 
-from core.db import Job, Source, Status, get_job_by_id, session_scope, upsert_job
+from automation.runner import apply_pending
+from automation.workday import ApplyResult
+from config.settings import get_settings
+from core.db import (
+    Job,
+    Source,
+    Status,
+    Tier,
+    get_job_by_id,
+    get_jobs_by_status,
+    get_unsent_pending_reviews,
+    session_scope,
+    upsert_job,
+)
+from orchestrator.pipeline import run_pipeline
 from scorer.shortlist import (
     SELECTED_BY_PRIORITY,
     SELECTED_FOR_PORTFOLIO_DIVERSITY,
@@ -321,3 +335,155 @@ async def test_apply_shortlist_is_idempotent_and_preserves_scores(db_ready: Path
         assert added.status == Status.pending_review
         assert added.shortlist_config_hash == third.config_hash
         assert added.priority_score == 80
+
+
+class _SpyApplicator:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def apply(self, job: Job) -> ApplyResult:
+        self.calls.append(job.id)
+        return ApplyResult(
+            screenshot_path="/tmp/review.png",
+            application_answers={},
+            reached_review=True,
+        )
+
+
+async def test_pipeline_enriches_the_review_queue_and_apply_stays_on_staged(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    saved: dict[str, int] = {}
+    async with session_scope() as session:
+        locked = await upsert_job(
+            session,
+            _job("locked", status=Status.submitted, priority_score=300, company="Locked"),
+        )
+        chosen = await upsert_job(
+            session,
+            _job(
+                "review-a",
+                priority_score=100,
+                company="Alpha",
+                tier=Tier.one,
+                source=Source.workday,
+                resume_path="/tmp/a.pdf",
+            ),
+        )
+        for index in range(19):
+            await upsert_job(
+                session,
+                _job(
+                    f"mid-{index}",
+                    priority_score=99 - index,
+                    company=f"Mid{index}",
+                    tier=Tier.two,
+                ),
+            )
+        waiting = await upsert_job(
+            session,
+            _job(
+                "review-b",
+                priority_score=1,
+                company="Beta",
+                tier=Tier.one,
+                source=Source.workday,
+                resume_path="/tmp/b.pdf",
+            ),
+        )
+        assert locked.id and chosen.id and waiting.id
+        saved["locked"] = locked.id
+        saved["a"] = chosen.id
+        saved["b"] = waiting.id
+
+    suggested: list[int] = []
+    benchmarked: list[int] = []
+    resume_ids: list[int] = []
+
+    async def fake_suggest(job_id: int, **_kwargs: object) -> list[object]:
+        suggested.append(job_id)
+        return []
+
+    async def fake_benchmark(job_id: int, **_kwargs: object) -> object:
+        benchmarked.append(job_id)
+        return type("Summary", (), {"report": object()})()
+
+    async def record_prepare(**kwargs: object) -> object:
+        async with session_scope() as session:
+            rows = await get_jobs_by_status(session, kwargs["status"])  # type: ignore[arg-type]
+        resume_ids.extend(row.id for row in rows if row.id is not None)
+        return object()
+
+    async def noop() -> None:
+        return None
+
+    monkeypatch.setattr("orchestrator.pipeline.generate_suggestions_for_job", fake_suggest)
+    monkeypatch.setattr("benchmark.engine.run_benchmark", fake_benchmark)
+    monkeypatch.setattr("orchestrator.pipeline._prepare_resumes", record_prepare)
+    monkeypatch.setattr("orchestrator.pipeline._run_ingestion", noop)
+    monkeypatch.setattr("orchestrator.pipeline._score_pending", noop)
+    monkeypatch.setenv("ENABLE_SUGGESTIONS", "true")
+    monkeypatch.setenv("ENABLE_BENCHMARK", "true")
+    monkeypatch.setenv("ENABLE_LINKEDIN_SCRAPE", "true")
+    get_settings.cache_clear()
+
+    import orchestrator.pipeline as pipeline_mod
+
+    first = await run_pipeline(
+        enable_apply=False,
+        enable_reviews=False,
+        enable_prep_pack=False,
+        enable_suggestions=True,
+        enable_benchmark=True,
+    )
+    selected = pipeline_mod._selected_ids(first)
+    assert saved["a"] in selected
+    assert saved["b"] not in selected
+    assert saved["locked"] not in selected
+    assert suggested == selected
+    assert benchmarked == [saved["a"]]
+    assert saved["a"] in resume_ids
+    assert saved["b"] not in resume_ids
+
+    async with session_scope() as session:
+        review_a = await get_job_by_id(session, saved["a"])
+        review_b = await get_job_by_id(session, saved["b"])
+        review_locked = await get_job_by_id(session, saved["locked"])
+        queue = await get_unsent_pending_reviews(session)
+        assert review_a is not None and review_b is not None and review_locked is not None
+        assert review_a.status == Status.pending_review
+        assert review_a.shortlist_rank == 1
+        assert review_a.score == 80
+        assert review_b.status == Status.staged
+        assert review_b.shortlist_rank is None
+        assert review_locked.status == Status.submitted
+        assert {job.id for job in queue} >= {saved["a"]}
+        assert saved["b"] not in {job.id for job in queue}
+        rank = review_a.shortlist_rank
+
+    suggested.clear()
+    second = await run_pipeline(
+        enable_apply=False,
+        enable_reviews=False,
+        enable_prep_pack=False,
+        enable_suggestions=True,
+        enable_benchmark=True,
+    )
+    assert pipeline_mod._selected_ids(second) == []
+    assert suggested == []
+    async with session_scope() as session:
+        again = await get_job_by_id(session, saved["a"])
+        assert again is not None
+        assert again.status == Status.pending_review
+        assert again.shortlist_rank == rank
+
+    spy = _SpyApplicator()
+    await apply_pending(applicator=spy, limit=50)
+    assert spy.calls == [saved["b"]]
+    async with session_scope() as session:
+        untouched = await get_job_by_id(session, saved["a"])
+        assert untouched is not None
+        assert untouched.status == Status.pending_review
+        assert untouched.screenshot_path is None

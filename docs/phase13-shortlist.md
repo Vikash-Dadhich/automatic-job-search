@@ -29,6 +29,13 @@ A job that is not chosen stays `staged`. It is not deleted, filtered out, or mar
 
 ## Pipeline
 
-The run order is ingest, score, shortlist, resume, suggestions, benchmark, prep, apply, then reviews. Resume preparation in that run attaches a resume to `pending_review` jobs. Calling `prepare_pending` directly still uses `staged`, which is what the existing resume tests do.
+`staged` means the job is scored and still waiting. It is not in the human review queue. `pending_review` means the shortlist chose it, or an earlier Workday pre-fill parked it there. The shortlist does not pull a job back out of `pending_review`.
 
-Suggestions, benchmark, the prep-pack file, and Workday pre-fill still read `staged`. They do not see jobs the shortlist has already moved into review. Telegram review already reads `pending_review`, so it sends the jobs this phase selected. Approve, discard, and submit are unchanged.
+The run order is ingest, score, shortlist, resume, suggestions, benchmark, prep, apply, then reviews.
+
+- Shortlist reads `staged` and returns the ids it moved to `pending_review`.
+- Resume preparation on that run attaches a resume to `pending_review` jobs. A direct `prepare_pending()` call still uses `staged`.
+- Skill suggestions and Tier-1 benchmarking use those shortlist ids. They do not scan every staged job, and they do not scan the whole review queue from earlier runs.
+- The prep file still uses the ids scoring just produced. That loader does not filter on status, so a job scored in the same run remains eligible for the file after the shortlist moves it.
+- Workday pre-fill still reads `staged`. A job in `pending_review` is not an application candidate. Shortlist does not start an application.
+- Telegram review reads `pending_review`. Approve, discard, and submit are unchanged.

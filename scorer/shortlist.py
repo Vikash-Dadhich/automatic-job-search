@@ -38,6 +38,7 @@ class ShortlistSummary:
     already_pending: int
     version: str
     config_hash: str
+    selected_ids: tuple[int, ...] = ()
 
 
 def _require_int(name: str, value: object, *, lower: int, upper: int) -> int:
@@ -229,6 +230,7 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
         pending = await get_jobs_by_status(session, Status.pending_review)
     picks = select_shortlist(staged, config=settings, occupied=len(pending))
     now = datetime.now(UTC)
+    chosen: list[int] = []
     for pick in picks:
         if pick.job.id is None:
             continue
@@ -243,10 +245,12 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
             target.shortlist_config_hash = digest
             target.updated_at = now
             session.add(target)
+            chosen.append(pick.job.id)
     return ShortlistSummary(
-        selected=len(picks),
+        selected=len(chosen),
         considered=len(staged),
         already_pending=len(pending),
         version=SHORTLIST_VERSION,
         config_hash=digest,
+        selected_ids=tuple(chosen),
     )

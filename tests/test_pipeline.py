@@ -37,7 +37,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         order.append("resume")
         return _FakeSummary("resume")
 
-    async def fake_suggest_gen() -> dict[str, int]:
+    async def fake_suggest_gen(*_args: object, **_kwargs: object) -> dict[str, int]:
         order.append("suggest_generate")
         return {"generated": 0, "skipped": 0}
 
@@ -65,7 +65,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         order.append("alerts")
         return _FakeSummary("alerts")
 
-    async def fake_benchmark() -> dict[str, int]:
+    async def fake_benchmark(*_args: object, **_kwargs: object) -> dict[str, int]:
         order.append("benchmark")
         return {"benchmarked": 0, "skipped": 0}
 
@@ -185,13 +185,13 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: ok("shortlist"))
     monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: ok("resume"))
     monkeypatch.setattr(
-        pipeline_mod, "_generate_suggestions_stage", lambda: ok("suggest_generate")
+        pipeline_mod, "_generate_suggestions_stage", lambda *_a, **_k: ok("suggest_generate")
     )
     monkeypatch.setattr(
-        pipeline_mod, "_send_pending_suggestions", lambda: ok("suggest_send")
+        pipeline_mod, "_send_pending_suggestions", lambda *_a, **_k: ok("suggest_send")
     )
     monkeypatch.setattr(
-        pipeline_mod, "_benchmark_tier_one_stage", lambda: ok("benchmark")
+        pipeline_mod, "_benchmark_tier_one_stage", lambda *_a, **_k: ok("benchmark")
     )
     monkeypatch.setattr(
         pipeline_mod, "_send_prep_pack", lambda *_a, **_k: ok("prep")

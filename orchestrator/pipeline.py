@@ -30,7 +30,7 @@ _score_pending = score_pending
 _prepare_resumes = prepare_pending
 
 
-async def _shortlist_stage() -> dict[str, int]:
+async def _shortlist_stage() -> dict[str, Any]:
     """Move the current staged selection into pending_review."""
     from scorer.shortlist import apply_shortlist
 
@@ -39,7 +39,17 @@ async def _shortlist_stage() -> dict[str, int]:
         "selected": result.selected,
         "considered": result.considered,
         "already_pending": result.already_pending,
+        "selected_ids": list(result.selected_ids),
     }
+
+
+def _selected_ids(summary: PipelineSummary) -> list[int]:
+    """Job ids the shortlist just moved into review. Empty when that stage did not run."""
+    payload = summary.stages.get("shortlist")
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("selected_ids") or []
+    return [item for item in raw if isinstance(item, int)]
 
 
 async def _prepare_shortlisted_resumes() -> Any:
@@ -71,40 +81,38 @@ class PipelineSummary:
         return not self.stage_errors
 
 
-async def _generate_suggestions_stage() -> dict[str, int]:
-    """Create skill suggestions for staged jobs that lack pending rows."""
-    from core.db import Status, get_jobs_by_status, get_suggestions_for_job, init_db, session_scope
+async def _generate_suggestions_stage(job_ids: list[int] | None = None) -> dict[str, int]:
+    """Create skill suggestions for the jobs this run placed in review.
+
+    Leftover staged jobs are not included. Passing no ids generates nothing.
+    """
+    from core.db import get_suggestions_for_job, init_db, session_scope
 
     await init_db()
     settings = get_settings()
     if not settings.enable_suggestions:
         return {"generated": 0, "skipped": 0}
 
-    async with session_scope() as session:
-        jobs = await get_jobs_by_status(session, Status.staged, limit=20)
-
     generated = 0
     skipped = 0
-    for job in jobs:
-        if job.id is None:
-            continue
+    for job_id in job_ids or []:
         async with session_scope() as session:
-            existing = await get_suggestions_for_job(session, job.id)
+            existing = await get_suggestions_for_job(session, job_id)
         if existing:
             skipped += 1
             continue
         try:
-            await generate_suggestions_for_job(job.id)
+            await generate_suggestions_for_job(job_id)
             generated += 1
         except Exception as exc:
-            log.warning("pipeline_suggest_job_failed", job_id=job.id, error=str(exc))
+            log.warning("pipeline_suggest_job_failed", job_id=job_id, error=str(exc))
     return {"generated": generated, "skipped": skipped}
 
 
-async def _benchmark_tier_one_stage() -> dict[str, int]:
-    """Auto-discover + benchmark Tier-1 staged jobs (LinkedIn scrape, gated)."""
+async def _benchmark_tier_one_stage(job_ids: list[int] | None = None) -> dict[str, int]:
+    """Benchmark Tier-1 jobs from this run's shortlist. Not the leftover staged pool."""
     from benchmark.engine import run_benchmark
-    from core.db import Status, Tier, get_jobs_by_status, init_db, session_scope
+    from core.db import Tier, get_job_by_id, init_db, session_scope
 
     await init_db()
     settings = get_settings()
@@ -118,9 +126,13 @@ async def _benchmark_tier_one_stage() -> dict[str, int]:
         return {"benchmarked": 0, "skipped": 0}
 
     async with session_scope() as session:
-        jobs = await get_jobs_by_status(session, Status.staged, limit=10)
+        jobs = []
+        for job_id in job_ids or []:
+            job = await get_job_by_id(session, job_id)
+            if job is not None:
+                jobs.append(job)
 
-    tier_one = [j for j in jobs if j.tier == Tier.one and j.id is not None]
+    tier_one = [j for j in jobs if j.tier == Tier.one and j.id is not None][:10]
     benchmarked = 0
     skipped = 0
     for job in tier_one:
@@ -169,9 +181,17 @@ async def run_pipeline(
     started = time.perf_counter()
 
     async def _prep_stage() -> Any:
+        # Prep already loads these ids without a status filter, so a job that
+        # scoring just wrote and shortlist then moved is still included.
         scoring = summary.stages.get("scoring")
         raw_ids = getattr(scoring, "scored_ids", []) or []
         return await _send_prep_pack(job_ids=list(raw_ids))
+
+    async def _suggest_stage() -> dict[str, int]:
+        return await _generate_suggestions_stage(_selected_ids(summary))
+
+    async def _benchmark_stage() -> dict[str, int]:
+        return await _benchmark_tier_one_stage(_selected_ids(summary))
 
     baseline = effective_baseline(settings)
     baseline_path = None
@@ -209,7 +229,7 @@ async def run_pipeline(
     await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
 
     if do_suggest:
-        await _run_stage(summary, "suggest_generate", _generate_suggestions_stage)
+        await _run_stage(summary, "suggest_generate", _suggest_stage)
         if do_suggest_send:
             await _run_stage(summary, "suggest_send", _send_pending_suggestions)
         else:
@@ -219,7 +239,7 @@ async def run_pipeline(
         summary.skipped.append("suggest_send")
 
     if do_benchmark:
-        await _run_stage(summary, "benchmark", _benchmark_tier_one_stage)
+        await _run_stage(summary, "benchmark", _benchmark_stage)
     else:
         summary.skipped.append("benchmark")
 
