@@ -220,6 +220,7 @@ async def test_role_families_follow_the_job(
     assert result.role_subfamily == subfamily
     assert result.role_confidence in {"high", "medium", "low"}
     assert result.role_classifier_version == ROLE_CLASSIFIER_VERSION
+    assert result.role_secondary_family is None
     blob = " ".join(result.role_evidence).lower()
     assert "candidate" not in blob
     assert "fit" not in blob
@@ -437,11 +438,17 @@ async def test_truncated_jd_stays_conservative() -> None:
 
 
 def test_classifier_version_bump_invalidates_phase5_v1() -> None:
-    assert ROLE_CLASSIFIER_VERSION == "phase5-v2"
+    assert ROLE_CLASSIFIER_VERSION == "phase5-v3"
     assert not classification_is_current(
         role_family="OTHER",
         role_content_hash="abc",
         role_classifier_version="phase5-v1",
+        content_hash="abc",
+    )
+    assert not classification_is_current(
+        role_family="OTHER",
+        role_content_hash="abc",
+        role_classifier_version="phase5-v2",
         content_hash="abc",
     )
     assert classification_is_current(
@@ -481,5 +488,5 @@ async def test_stale_classifier_version_is_replaced_on_reprocess(db_ready: Path)
         saved = await upsert_job(session, incoming)
     assert saved.role_family == "MARKETING"
     assert saved.role_subfamily == "MARKETING_GENERAL"
-    assert saved.role_classifier_version == "phase5-v2"
+    assert saved.role_classifier_version == ROLE_CLASSIFIER_VERSION
     assert saved.role_content_hash == saved.content_hash

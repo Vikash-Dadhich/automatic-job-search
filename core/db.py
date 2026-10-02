@@ -133,6 +133,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "role_secondary_family": "VARCHAR(64)",
+        "role_secondary_subfamily": "VARCHAR(64)",
+        "role_secondary_confidence": "VARCHAR(16)",
+        "role_secondary_evidence": "JSON",
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
         "company_intelligence_id": "INTEGER",
@@ -189,6 +193,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "role_evidence": "JSON",
         "role_classifier_version": "VARCHAR(32)",
         "role_content_hash": "VARCHAR(64)",
+        "role_secondary_family": "VARCHAR(64)",
+        "role_secondary_subfamily": "VARCHAR(64)",
+        "role_secondary_confidence": "VARCHAR(16)",
+        "role_secondary_evidence": "JSON",
         "role_family_weight": "INTEGER",
         "role_family_weight_version": "VARCHAR(32)",
         "company_intelligence_id": "INTEGER",
@@ -346,6 +354,13 @@ class Job(SQLModel, table=True):
     role_evidence: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     role_classifier_version: str | None = Field(default=None, max_length=32)
     role_content_hash: str | None = Field(default=None, max_length=64)
+    role_secondary_family: str | None = Field(default=None, max_length=64)
+    role_secondary_subfamily: str | None = Field(default=None, max_length=64)
+    role_secondary_confidence: str | None = Field(default=None, max_length=16)
+    role_secondary_evidence: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
     # Portfolio importance of role_family. Not a fit score and not search capacity.
     role_family_weight: int | None = Field(default=None)
     role_family_weight_version: str | None = Field(default=None, max_length=32)
@@ -1060,6 +1075,10 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.role_evidence = None
         existing.role_classifier_version = None
         existing.role_content_hash = None
+        existing.role_secondary_family = None
+        existing.role_secondary_subfamily = None
+        existing.role_secondary_confidence = None
+        existing.role_secondary_evidence = None
         existing.fit_confidence = None
         existing.fit_strengths = None
         existing.fit_gaps = None
@@ -1086,6 +1105,10 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.role_evidence = job.role_evidence
         existing.role_classifier_version = job.role_classifier_version
         existing.role_content_hash = job.role_content_hash or existing.content_hash
+        existing.role_secondary_family = job.role_secondary_family
+        existing.role_secondary_subfamily = job.role_secondary_subfamily
+        existing.role_secondary_confidence = job.role_secondary_confidence
+        existing.role_secondary_evidence = job.role_secondary_evidence
     _stamp_role_family_weight(existing)
     if existing.status in {Status.discovered, Status.filtered_out}:
         existing.status = job.status

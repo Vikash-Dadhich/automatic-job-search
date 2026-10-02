@@ -85,7 +85,29 @@ async def _apply_role_classification(
         job.role_evidence = existing.role_evidence
         job.role_classifier_version = existing.role_classifier_version
         job.role_content_hash = existing.role_content_hash
+        job.role_secondary_family = existing.role_secondary_family
+        job.role_secondary_subfamily = existing.role_secondary_subfamily
+        job.role_secondary_confidence = existing.role_secondary_confidence
+        job.role_secondary_evidence = existing.role_secondary_evidence
         return
+    structured = None
+    if job.id is not None:
+        from scraper.structured_jd import (
+            STRUCTURED_JD_VERSION,
+            StructuredJdDocument,
+            get_structured_jd,
+        )
+
+        stored = await get_structured_jd(session, job.id)
+        if (
+            stored is not None
+            and stored.version == STRUCTURED_JD_VERSION
+            and stored.availability != "unavailable"
+        ):
+            try:
+                structured = StructuredJdDocument.model_validate(stored.document)
+            except Exception:
+                structured = None
     classified = await classify_role(
         title=job.title,
         description=job.description_clean or "",
@@ -95,6 +117,7 @@ async def _apply_role_classification(
         discovery_query=job.discovery_query,
         client=role_client,
         truncated=job.jd_truncated is True,
+        structured=structured,
     )
     job.role_family = classified.role_family
     job.role_subfamily = classified.role_subfamily
@@ -102,6 +125,10 @@ async def _apply_role_classification(
     job.role_evidence = classified.role_evidence
     job.role_classifier_version = classified.role_classifier_version or ROLE_CLASSIFIER_VERSION
     job.role_content_hash = classified.role_content_hash
+    job.role_secondary_family = classified.role_secondary_family
+    job.role_secondary_subfamily = classified.role_secondary_subfamily
+    job.role_secondary_confidence = classified.role_secondary_confidence
+    job.role_secondary_evidence = classified.role_secondary_evidence or None
 
 
 def _attach_coverage(
@@ -274,7 +301,6 @@ async def run_ingestion(
                 )
                 summary.filtered_out += 1
 
-            await _apply_role_classification(session, job, role_client)
             saved = await upsert_job(session, job)
             summary.upserted += 1
             try:
@@ -305,6 +331,18 @@ async def run_ingestion(
             except Exception as exc:
                 log.warning(
                     "structured_jd_failed",
+                    company=saved.company,
+                    error=str(exc)[:200],
+                )
+            try:
+                await _apply_role_classification(session, saved, role_client)
+                from core.db import _stamp_role_family_weight
+
+                _stamp_role_family_weight(saved)
+                session.add(saved)
+            except Exception as exc:
+                log.warning(
+                    "role_classification_failed",
                     company=saved.company,
                     error=str(exc)[:200],
                 )

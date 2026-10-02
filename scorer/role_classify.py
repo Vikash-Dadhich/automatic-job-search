@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
 from scorer.clients import LLMClient
 
-ROLE_CLASSIFIER_VERSION = "phase5-v2"
+ROLE_CLASSIFIER_VERSION = "phase5-v3"
 
 PRIMARY_FAMILIES = frozenset(
     {
@@ -196,9 +196,13 @@ _CLASSIFY_SYSTEM = (
     "Do not score fit. Do not rank the job. Do not invent facts. "
     "MARKETING is general marketing, not product marketing. "
     "TECHNOLOGY_STRATEGY is internal technology strategy, not technology consulting. "
-    "Return only the allowed taxonomy. OTHER and UNKNOWN are allowed. "
+    "Return only the allowed taxonomy. OTHER and UNKNOWN are allowed as the primary family. "
+    "A second family is optional and only when the role itself performs that function. "
+    "Do not set a secondary family to OTHER or UNKNOWN. "
+    "Collaborating with another function is not a secondary family. "
     "Confidence is how sure the role label is, not whether someone should apply. "
-    'Reply with JSON {"primary_family","subfamily","confidence","evidence"}.'
+    'Reply with JSON {"primary_family","subfamily","confidence","evidence",'
+    '"secondary_family","secondary_subfamily","secondary_confidence","secondary_evidence"}.'
 )
 
 
@@ -207,6 +211,10 @@ class _ModelLabel(BaseModel):
     subfamily: str | None = None
     confidence: str
     evidence: list[str] = Field(default_factory=list)
+    secondary_family: str | None = None
+    secondary_subfamily: str | None = None
+    secondary_confidence: str | None = None
+    secondary_evidence: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +226,10 @@ class RoleClassification:
     role_classifier_version: str
     role_content_hash: str | None
     used_llm: bool = False
+    role_secondary_family: str | None = None
+    role_secondary_subfamily: str | None = None
+    role_secondary_confidence: str | None = None
+    role_secondary_evidence: list[str] = field(default_factory=list)
 
 
 def classification_is_current(
@@ -300,10 +312,183 @@ def _score_blob(blob: str, weight: int, scores: dict[str, int]) -> None:
             scores[subfamily] = scores.get(subfamily, 0) + weight
 
 
+_AREA_FAMILY: dict[str, tuple[str, str]] = {
+    "product_management": ("PRODUCT_MANAGEMENT", "PM_CORE"),
+    "consulting": ("CONSULTING", "MANAGEMENT_CONSULTING"),
+    "strategy": ("STRATEGY_TRANSFORMATION", "CORPORATE_STRATEGY"),
+    "technology_strategy": ("STRATEGY_TRANSFORMATION", "TECHNOLOGY_STRATEGY"),
+    "business_transformation": ("STRATEGY_TRANSFORMATION", "BUSINESS_TRANSFORMATION"),
+    "program_operations": ("PROGRAM_PROJECT_OPERATIONS", "PROGRAM_MANAGEMENT"),
+    "product_marketing": ("PRODUCT_MARKETING", "PRODUCT_MARKETING"),
+    "marketing": ("MARKETING", "MARKETING_GENERAL"),
+}
+_INTERACTION_RE = re.compile(
+    r"\b(?:collaborat\w*|work(?:s|ing)?(?:\s+closely)?\s+with|partner(?:s|ing)?\s+with)\b",
+    re.IGNORECASE,
+)
+_PERFORM_RE = re.compile(
+    r"\b(?:own|owns|lead|leads|develop|develops|define|defines|drive|drives|manage|manages|"
+    r"responsible|build|builds)\b",
+    re.IGNORECASE,
+)
+_NO_SECONDARY = frozenset({"OTHER", "UNKNOWN"})
+
+
+def _clause_containing(text: str, phrase: str) -> str:
+    match = re.search(re.escape(phrase), text, re.IGNORECASE)
+    if match is None:
+        return ""
+    start = max(
+        text.rfind(".", 0, match.start()),
+        text.rfind("\n", 0, match.start()),
+        text.rfind(";", 0, match.start()),
+    )
+    ends = [
+        pos
+        for pos in (
+            text.find(".", match.end()),
+            text.find("\n", match.end()),
+            text.find(";", match.end()),
+        )
+        if pos != -1
+    ]
+    end = min(ends) if ends else len(text)
+    return text[start + 1 : end].strip()
+
+
+def _is_interaction(clause: str) -> bool:
+    """True when the clause only says the role works beside another function."""
+    if not clause or _INTERACTION_RE.search(clause) is None:
+        return False
+    return _PERFORM_RE.search(clause) is None
+
+
+def _phrase_hits(description: str) -> dict[str, dict[str, list[str]]]:
+    """Family → subfamily → phrases the role itself performs."""
+    found: dict[str, dict[str, list[str]]] = {}
+    for subfamily, phrases in _PHRASES.items():
+        family = SUBFAMILY_FAMILY[subfamily]
+        for phrase in phrases:
+            if phrase not in description.lower():
+                continue
+            if _is_interaction(_clause_containing(description, phrase)):
+                continue
+            found.setdefault(family, {}).setdefault(subfamily, [])
+            if phrase not in found[family][subfamily]:
+                found[family][subfamily].append(phrase)
+    return found
+
+
+def _structured_support(structured: Any, family: str) -> str | None:
+    """A non-interaction structured signal for this family, if one exists."""
+    if structured is None or getattr(structured, "availability", None) == "unavailable":
+        return None
+    functional = getattr(structured, "functional", None)
+    areas = getattr(functional, "areas", None) or []
+    for item in areas:
+        mapped = _AREA_FAMILY.get(getattr(item, "category", ""))
+        if mapped is None or mapped[0] != family:
+            continue
+        snippet = str(getattr(item, "snippet", "") or getattr(item, "text", ""))
+        if snippet and not _is_interaction(snippet):
+            return " ".join(snippet.split())[:120]
+    return None
+
+
+def _secondary_choice(
+    description: str,
+    primary_family: str,
+    structured: Any,
+    *,
+    truncated: bool,
+) -> tuple[str, str | None, str, list[str]] | None:
+    """A second canonical family, or None when the overlap is thin or absent."""
+    if truncated or primary_family in _NO_SECONDARY:
+        return None
+    hits = _phrase_hits(description)
+    ranked: list[tuple[str, str | None, list[str], str | None]] = []
+    for family, by_sub in hits.items():
+        if family == primary_family or family in _NO_SECONDARY:
+            continue
+        phrases = [phrase for group in by_sub.values() for phrase in group]
+        support = _structured_support(structured, family)
+        if len(phrases) < 2 and not (phrases and support):
+            continue
+        best_sub = sorted(by_sub, key=lambda name: (-len(by_sub[name]), name))[0]
+        ranked.append((family, best_sub, phrases, support))
+    if not ranked:
+        return None
+    family, subfamily, phrases, support = sorted(
+        ranked,
+        key=lambda item: (-len(item[2]), item[0]),
+    )[0]
+    if len(phrases) >= 3:
+        confidence = "high"
+    elif len(phrases) >= 2:
+        confidence = "medium"
+    else:
+        confidence = "low"
+    evidence = list(phrases[:3])
+    if support and support not in evidence:
+        evidence.append(support)
+    return family, subfamily, confidence, evidence[:4]
+
+
+def _with_secondary(
+    result: RoleClassification,
+    description: str,
+    structured: Any,
+    *,
+    truncated: bool,
+) -> RoleClassification:
+    chosen = _secondary_choice(
+        description,
+        result.role_family,
+        structured,
+        truncated=truncated,
+    )
+    if chosen is None:
+        return result
+    family, subfamily, confidence, evidence = chosen
+    return replace(
+        result,
+        role_secondary_family=family,
+        role_secondary_subfamily=subfamily,
+        role_secondary_confidence=confidence,
+        role_secondary_evidence=evidence,
+    )
+
+
+def _validated_secondary(label: _ModelLabel) -> tuple[str, str | None, str, list[str]] | None:
+    raw = (label.secondary_family or "").strip().upper()
+    if raw in {"", * _NO_SECONDARY}:
+        return None
+    if raw not in PRIMARY_FAMILIES:
+        return None
+    subfamily = (label.secondary_subfamily or "").strip().upper() or None
+    if subfamily is not None and SUBFAMILY_FAMILY.get(subfamily) != raw:
+        subfamily = None
+    confidence = (label.secondary_confidence or "").strip().lower()
+    if confidence not in {"high", "medium", "low"}:
+        confidence = "low"
+    evidence = [
+        line.strip()
+        for line in label.secondary_evidence
+        if line and line.strip()
+        and not re.search(r"\b(candidate|vikash|fit score|resume)\b", line, re.IGNORECASE)
+    ][:4]
+    if not evidence:
+        evidence = [_EVIDENCE.get(subfamily or raw, _EVIDENCE["UNKNOWN"])]
+    return raw, subfamily, confidence, evidence
+
+
 def _deterministic(
     title: str,
     description: str,
     content_hash: str | None,
+    structured: Any = None,
+    *,
+    truncated: bool = False,
 ) -> tuple[RoleClassification | None, bool]:
     """Return (classification, needs_llm). needs_llm is unused when classification is set."""
     if len(description.strip()) < 80:
@@ -365,7 +550,8 @@ def _deterministic(
         confidence = "medium"
     else:
         confidence = "low"
-    return _result(family, subfamily, confidence, evidence, content_hash), False
+    decided = _result(family, subfamily, confidence, evidence, content_hash)
+    return _with_secondary(decided, description, structured, truncated=truncated), False
 
 
 def _parse_model(payload: str, content_hash: str | None) -> RoleClassification:
@@ -386,13 +572,26 @@ def _parse_model(payload: str, content_hash: str | None) -> RoleClassification:
         for line in label.evidence
         if not re.search(r"\b(candidate|vikash|fit score|resume)\b", line, re.IGNORECASE)
     ]
-    return _result(
+    decided = _result(
         family,
         subfamily,
         label.confidence.strip().lower(),
         evidence,
         content_hash,
         used_llm=True,
+    )
+    if decided.role_family == "UNKNOWN":
+        return decided
+    secondary = _validated_secondary(label)
+    if secondary is None or secondary[0] == decided.role_family:
+        return decided
+    family_name, subfamily_name, confidence, secondary_evidence = secondary
+    return replace(
+        decided,
+        role_secondary_family=family_name,
+        role_secondary_subfamily=subfamily_name,
+        role_secondary_confidence=confidence,
+        role_secondary_evidence=secondary_evidence,
     )
 
 
@@ -407,10 +606,17 @@ async def classify_role(
     client: LLMClient | None = None,
     model: str | None = None,
     truncated: bool = False,
+    structured: Any = None,
 ) -> RoleClassification:
     """Classify the role from the posting. Discovery labels are not copied across."""
     del discovery_family, discovery_bucket, discovery_query
-    decided, needs_llm = _deterministic(title, description, content_hash)
+    decided, needs_llm = _deterministic(
+        title,
+        description,
+        content_hash,
+        structured,
+        truncated=truncated,
+    )
     if truncated and needs_llm:
         return _unknown(
             content_hash,
