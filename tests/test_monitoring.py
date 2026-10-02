@@ -189,6 +189,31 @@ async def test_pipeline_failure_outside_a_stage_is_failed(
     assert runs[0].status == "failed"
 
 
+async def test_pre_stage_setup_failure_marks_the_run_failed(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+
+    def boom(_settings: object) -> dict[str, object]:
+        raise RuntimeError("baseline setup escaped")
+
+    monkeypatch.setattr(pipeline_mod, "effective_baseline", boom)
+    with pytest.raises(RuntimeError, match="baseline setup escaped"):
+        await run_pipeline(
+            enable_apply=False,
+            enable_reviews=False,
+            enable_prep_pack=False,
+            enable_suggestions=False,
+            enable_benchmark=False,
+        )
+    runs = await list_pipeline_runs()
+    assert len(runs) == 1
+    assert runs[0].status == "failed"
+    assert runs[0].finished_at is not None
+    assert runs[0].duration_ms is not None
+
+
 async def test_telemetry_failure_does_not_stop_the_pipeline(
     db_ready: object,
     monkeypatch: pytest.MonkeyPatch,

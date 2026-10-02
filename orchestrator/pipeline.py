@@ -207,7 +207,39 @@ async def run_pipeline(
     started = time.perf_counter()
     run_id = await _safe_open_run()
     token = _current_run.set(run_id)
+    try:
+        return await _run_opened_pipeline(
+            summary,
+            started,
+            run_id,
+            settings,
+            do_apply=do_apply,
+            do_reviews=do_reviews,
+            do_prep=do_prep,
+            do_suggest=do_suggest,
+            do_suggest_send=do_suggest_send,
+            do_benchmark=do_benchmark,
+        )
+    except Exception:
+        await _safe_close_run(run_id, summary, status="failed")
+        raise
+    finally:
+        _current_run.reset(token)
 
+
+async def _run_opened_pipeline(
+    summary: PipelineSummary,
+    started: float,
+    run_id: int | None,
+    settings: Any,
+    *,
+    do_apply: bool,
+    do_reviews: bool,
+    do_prep: bool,
+    do_suggest: bool,
+    do_suggest_send: bool,
+    do_benchmark: bool,
+) -> PipelineSummary:
     async def _prep_stage() -> Any:
         # Prep already loads these ids without a status filter, so a job that
         # scoring just wrote and shortlist then moved is still included.
@@ -256,62 +288,56 @@ async def run_pipeline(
     )
     log.info("monitoring_run_started", run_id=run_id)
 
-    try:
-        await _run_stage(summary, "ingestion", _run_ingestion)
-        await _run_stage(summary, "scoring", _score_pending)
-        await _run_stage(summary, "shortlist", _shortlist_stage)
-        await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
+    await _run_stage(summary, "ingestion", _run_ingestion)
+    await _run_stage(summary, "scoring", _score_pending)
+    await _run_stage(summary, "shortlist", _shortlist_stage)
+    await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
 
-        if do_suggest:
-            await _run_stage(summary, "suggest_generate", _suggest_stage)
-            if do_suggest_send:
-                await _run_stage(summary, "suggest_send", _send_pending_suggestions)
-            else:
-                await _note_skipped(summary, "suggest_send")
+    if do_suggest:
+        await _run_stage(summary, "suggest_generate", _suggest_stage)
+        if do_suggest_send:
+            await _run_stage(summary, "suggest_send", _send_pending_suggestions)
         else:
-            await _note_skipped(summary, "suggest_generate")
             await _note_skipped(summary, "suggest_send")
+    else:
+        await _note_skipped(summary, "suggest_generate")
+        await _note_skipped(summary, "suggest_send")
 
-        if do_benchmark:
-            await _run_stage(summary, "benchmark", _benchmark_stage)
-        else:
-            await _note_skipped(summary, "benchmark")
+    if do_benchmark:
+        await _run_stage(summary, "benchmark", _benchmark_stage)
+    else:
+        await _note_skipped(summary, "benchmark")
 
-        if do_prep:
-            await _run_stage(summary, "prep", _prep_stage)
-        else:
-            await _note_skipped(summary, "prep")
-            log.info("pipeline_stage_skipped", stage="prep")
+    if do_prep:
+        await _run_stage(summary, "prep", _prep_stage)
+    else:
+        await _note_skipped(summary, "prep")
+        log.info("pipeline_stage_skipped", stage="prep")
 
-        if do_apply:
-            await _run_stage(summary, "portfolio", _portfolio_stage)
-            await _run_stage(summary, "apply", _apply_allocated)
-        else:
-            await _note_skipped(summary, "portfolio")
-            await _note_skipped(summary, "apply")
-            log.info("pipeline_stage_skipped", stage="portfolio")
-            log.info("pipeline_stage_skipped", stage="apply")
+    if do_apply:
+        await _run_stage(summary, "portfolio", _portfolio_stage)
+        await _run_stage(summary, "apply", _apply_allocated)
+    else:
+        await _note_skipped(summary, "portfolio")
+        await _note_skipped(summary, "apply")
+        log.info("pipeline_stage_skipped", stage="portfolio")
+        log.info("pipeline_stage_skipped", stage="apply")
 
-        if do_reviews:
-            await _run_stage(summary, "reviews", _send_pending_reviews)
-            await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
-            await _run_stage(summary, "alerts", _send_pending_alerts)
-        else:
-            await _note_skipped(summary, "reviews")
-            await _note_skipped(summary, "outcome_prompts")
-            await _note_skipped(summary, "alerts")
-            log.info("pipeline_stage_skipped", stage="reviews")
-            log.info("pipeline_stage_skipped", stage="outcome_prompts")
-            log.info("pipeline_stage_skipped", stage="alerts")
-    except Exception:
-        await _safe_close_run(run_id, summary, status="failed")
-        _current_run.reset(token)
-        raise
+    if do_reviews:
+        await _run_stage(summary, "reviews", _send_pending_reviews)
+        await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
+        await _run_stage(summary, "alerts", _send_pending_alerts)
+    else:
+        await _note_skipped(summary, "reviews")
+        await _note_skipped(summary, "outcome_prompts")
+        await _note_skipped(summary, "alerts")
+        log.info("pipeline_stage_skipped", stage="reviews")
+        log.info("pipeline_stage_skipped", stage="outcome_prompts")
+        log.info("pipeline_stage_skipped", stage="alerts")
 
     summary.duration_ms = int((time.perf_counter() - started) * 1000)
     status = "partial" if summary.stage_errors else "succeeded"
     await _safe_close_run(run_id, summary, status=status)
-    _current_run.reset(token)
     log.info(
         "pipeline_complete",
         run_id=run_id,
