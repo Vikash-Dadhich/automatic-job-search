@@ -18,7 +18,11 @@ class _FakeSummary:
     n: int = 1
 
 
-async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pipeline_order_and_aggregation(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
     order: list[str] = []
 
     async def fake_ingestion() -> _FakeSummary:
@@ -130,7 +134,11 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     assert summary.duration_ms >= 0
 
 
-async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pipeline_skips_apply_and_reviews(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
     order: list[str] = []
 
     async def track(name: str) -> _FakeSummary:
@@ -178,7 +186,11 @@ async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch)
     assert "suggest_generate" not in summary.stages
 
 
-async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_pipeline_stage_isolation(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
     order: list[str] = []
 
     async def ok(name: str) -> _FakeSummary:

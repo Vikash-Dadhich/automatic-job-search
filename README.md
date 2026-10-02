@@ -245,6 +245,7 @@ uv run python main.py poll           # Telegram poller only
 uv run python main.py send-reviews   # send pending cards once
 uv run python main.py prep-pack      # LinkedIn/Indeed prep pack once
 uv run python main.py webhook        # FastAPI webhook (optional alt to poll)
+uv run python main.py health         # operational snapshot; does not start the scheduler
 ```
 
 Toggles in `.env`: `ENABLE_APPLY=false` / `ENABLE_REVIEWS=false` / `ENABLE_PREP_PACK=false` skip Workday pre-fill / Telegram send / prep packs (useful before sessions exist). Stage failures are isolated — one bad stage never aborts the rest of the run.

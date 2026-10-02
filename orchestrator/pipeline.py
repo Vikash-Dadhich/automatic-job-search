@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import os
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,10 @@ from scorer.engine import score_pending
 from scraper.ingest import run_ingestion
 
 log = structlog.get_logger(__name__)
+_current_run: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "pipeline_run_id",
+    default=None,
+)
 
 # Module-level aliases so tests can monkeypatch orchestrator.pipeline.*
 _run_ingestion = run_ingestion
@@ -200,6 +205,8 @@ async def run_pipeline(
 
     summary = PipelineSummary()
     started = time.perf_counter()
+    run_id = await _safe_open_run()
+    token = _current_run.set(run_id)
 
     async def _prep_stage() -> Any:
         # Prep already loads these ids without a status filter, so a job that
@@ -240,68 +247,99 @@ async def run_pipeline(
 
     log.info(
         "pipeline_start",
+        run_id=run_id,
         enable_apply=do_apply,
         enable_reviews=do_reviews,
         enable_prep_pack=do_prep,
         enable_suggestions=do_suggest,
         enable_benchmark=do_benchmark,
     )
+    log.info("monitoring_run_started", run_id=run_id)
 
-    await _run_stage(summary, "ingestion", _run_ingestion)
-    await _run_stage(summary, "scoring", _score_pending)
-    await _run_stage(summary, "shortlist", _shortlist_stage)
-    await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
+    try:
+        await _run_stage(summary, "ingestion", _run_ingestion)
+        await _run_stage(summary, "scoring", _score_pending)
+        await _run_stage(summary, "shortlist", _shortlist_stage)
+        await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
 
-    if do_suggest:
-        await _run_stage(summary, "suggest_generate", _suggest_stage)
-        if do_suggest_send:
-            await _run_stage(summary, "suggest_send", _send_pending_suggestions)
+        if do_suggest:
+            await _run_stage(summary, "suggest_generate", _suggest_stage)
+            if do_suggest_send:
+                await _run_stage(summary, "suggest_send", _send_pending_suggestions)
+            else:
+                await _note_skipped(summary, "suggest_send")
         else:
-            summary.skipped.append("suggest_send")
-    else:
-        summary.skipped.append("suggest_generate")
-        summary.skipped.append("suggest_send")
+            await _note_skipped(summary, "suggest_generate")
+            await _note_skipped(summary, "suggest_send")
 
-    if do_benchmark:
-        await _run_stage(summary, "benchmark", _benchmark_stage)
-    else:
-        summary.skipped.append("benchmark")
+        if do_benchmark:
+            await _run_stage(summary, "benchmark", _benchmark_stage)
+        else:
+            await _note_skipped(summary, "benchmark")
 
-    if do_prep:
-        await _run_stage(summary, "prep", _prep_stage)
-    else:
-        summary.skipped.append("prep")
-        log.info("pipeline_stage_skipped", stage="prep")
+        if do_prep:
+            await _run_stage(summary, "prep", _prep_stage)
+        else:
+            await _note_skipped(summary, "prep")
+            log.info("pipeline_stage_skipped", stage="prep")
 
-    if do_apply:
-        await _run_stage(summary, "portfolio", _portfolio_stage)
-        await _run_stage(summary, "apply", _apply_allocated)
-    else:
-        summary.skipped.append("portfolio")
-        summary.skipped.append("apply")
-        log.info("pipeline_stage_skipped", stage="portfolio")
-        log.info("pipeline_stage_skipped", stage="apply")
+        if do_apply:
+            await _run_stage(summary, "portfolio", _portfolio_stage)
+            await _run_stage(summary, "apply", _apply_allocated)
+        else:
+            await _note_skipped(summary, "portfolio")
+            await _note_skipped(summary, "apply")
+            log.info("pipeline_stage_skipped", stage="portfolio")
+            log.info("pipeline_stage_skipped", stage="apply")
 
-    if do_reviews:
-        await _run_stage(summary, "reviews", _send_pending_reviews)
-        await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
-        await _run_stage(summary, "alerts", _send_pending_alerts)
-    else:
-        summary.skipped.append("reviews")
-        summary.skipped.append("outcome_prompts")
-        summary.skipped.append("alerts")
-        log.info("pipeline_stage_skipped", stage="reviews")
-        log.info("pipeline_stage_skipped", stage="outcome_prompts")
-        log.info("pipeline_stage_skipped", stage="alerts")
+        if do_reviews:
+            await _run_stage(summary, "reviews", _send_pending_reviews)
+            await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
+            await _run_stage(summary, "alerts", _send_pending_alerts)
+        else:
+            await _note_skipped(summary, "reviews")
+            await _note_skipped(summary, "outcome_prompts")
+            await _note_skipped(summary, "alerts")
+            log.info("pipeline_stage_skipped", stage="reviews")
+            log.info("pipeline_stage_skipped", stage="outcome_prompts")
+            log.info("pipeline_stage_skipped", stage="alerts")
+    except Exception:
+        await _safe_close_run(run_id, summary, status="failed")
+        _current_run.reset(token)
+        raise
 
     summary.duration_ms = int((time.perf_counter() - started) * 1000)
+    status = "partial" if summary.stage_errors else "succeeded"
+    await _safe_close_run(run_id, summary, status=status)
+    _current_run.reset(token)
     log.info(
         "pipeline_complete",
+        run_id=run_id,
         duration_ms=summary.duration_ms,
         errors=list(summary.stage_errors.keys()),
         skipped=summary.skipped,
     )
+    log.info(
+        "monitoring_run_completed",
+        run_id=run_id,
+        status=status,
+        duration_ms=summary.duration_ms,
+        error_count=len(summary.stage_errors),
+    )
     return summary
+
+
+async def _note_skipped(summary: PipelineSummary, name: str) -> None:
+    summary.skipped.append(name)
+    run_id = _current_run.get()
+    if run_id is None:
+        return
+    try:
+        from orchestrator.monitoring import record_skipped_stage
+
+        await record_skipped_stage(run_id, name)
+    except Exception as exc:
+        log.warning("monitoring_stage_record_failed", stage=name, error=str(exc)[:200])
 
 
 async def _run_stage(
@@ -310,11 +348,21 @@ async def _run_stage(
     coro_factory: Any,
 ) -> None:
     stage_started = time.perf_counter()
+    stage_id = await _safe_open_stage(name)
+    log.info("monitoring_stage_started", run_id=_current_run.get(), stage=name)
     try:
         result = await coro_factory()
         summary.stages[name] = result
         duration_ms = int((time.perf_counter() - stage_started) * 1000)
         log.info("pipeline_stage_ok", stage=name, duration_ms=duration_ms)
+        log.info(
+            "monitoring_stage_completed",
+            run_id=_current_run.get(),
+            stage=name,
+            status="succeeded",
+            duration_ms=duration_ms,
+        )
+        await _safe_close_stage(stage_id, status="succeeded", result=result)
     except Exception as exc:
         summary.stage_errors[name] = str(exc)
         duration_ms = int((time.perf_counter() - stage_started) * 1000)
@@ -324,3 +372,79 @@ async def _run_stage(
             error=str(exc),
             duration_ms=duration_ms,
         )
+        log.warning(
+            "monitoring_stage_failed",
+            run_id=_current_run.get(),
+            stage=name,
+            status="failed",
+            duration_ms=duration_ms,
+            error=str(exc)[:200],
+        )
+        await _safe_close_stage(stage_id, status="failed", error=str(exc))
+
+
+async def _safe_open_run() -> int | None:
+    try:
+        from orchestrator.monitoring import interrupt_stale_runs
+
+        await interrupt_stale_runs()
+    except Exception as exc:
+        log.warning("monitoring_run_record_failed", error=str(exc)[:200])
+    try:
+        from orchestrator.monitoring import open_pipeline_run
+
+        return await open_pipeline_run()
+    except Exception as exc:
+        log.warning("monitoring_run_record_failed", error=str(exc)[:200])
+        return None
+
+
+async def _safe_close_run(run_id: int | None, summary: PipelineSummary, *, status: str) -> None:
+    if run_id is None:
+        return
+    try:
+        from orchestrator.monitoring import close_pipeline_run
+
+        await close_pipeline_run(
+            run_id,
+            status=status,
+            error_count=len(summary.stage_errors),
+            skipped_count=len(summary.skipped),
+        )
+    except Exception as exc:
+        log.warning("monitoring_run_record_failed", run_id=run_id, error=str(exc)[:200])
+
+
+async def _safe_open_stage(name: str) -> int | None:
+    run_id = _current_run.get()
+    if run_id is None:
+        return None
+    try:
+        from orchestrator.monitoring import open_stage_run
+
+        return await open_stage_run(run_id, name)
+    except Exception as exc:
+        log.warning("monitoring_stage_record_failed", stage=name, error=str(exc)[:200])
+        return None
+
+
+async def _safe_close_stage(
+    stage_id: int | None,
+    *,
+    status: str,
+    result: object = None,
+    error: str | None = None,
+) -> None:
+    if stage_id is None:
+        return
+    try:
+        from orchestrator.monitoring import close_stage_run, stage_counters
+
+        await close_stage_run(
+            stage_id,
+            status=status,
+            error=error,
+            counters=stage_counters(result),
+        )
+    except Exception as exc:
+        log.warning("monitoring_stage_record_failed", error=str(exc)[:200])

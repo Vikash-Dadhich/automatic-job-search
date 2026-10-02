@@ -1,0 +1,13 @@
+# Operational thresholds. These do not change scoring, ranking, or applications.
+
+version: phase18-v1
+
+monitoring:
+  stale_run_minutes: 180
+  recent_error_hours: 24
+  stale_pending_review_days: 14
+  stale_manual_review_days: 7
+  stale_staged_days: 21
+  critical_stale_runs: 1
+  critical_repeated_failures: 3
+  manual_review_backlog: 25

@@ -108,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     webhook.add_argument("--port", type=int, default=8000)
     doctor = sub.add_parser("doctor", help="Print a pipeline health report and exit")
     doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    sub.add_parser("health", help="Print operational health and exit without the scheduler")
 
     return parser
 
@@ -593,6 +594,13 @@ def _print_doctor_report(report: dict[str, Any]) -> None:
         print(f"  id={item.get('id')} {item.get('company')}: {message[:160]}")
 
 
+async def _cmd_health() -> None:
+    from orchestrator.health import format_health_report, get_health_report
+
+    report = await get_health_report()
+    print(format_health_report(report))
+
+
 async def _cmd_doctor(json_output: bool = False) -> dict[str, Any]:
     import json as _json
 
@@ -652,6 +660,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "doctor":
         asyncio.run(_cmd_doctor(json_output=args.json))
+        return 0
+
+    if command == "health":
+        asyncio.run(_cmd_health())
         return 0
 
     async_commands: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {

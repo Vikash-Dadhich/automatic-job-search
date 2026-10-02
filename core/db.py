@@ -526,6 +526,40 @@ class CalibrationMetric(SQLModel, table=True):
     direction_match: bool | None = Field(default=None)
 
 
+class PipelineRun(SQLModel, table=True):
+    """One pipeline invocation. Observational only."""
+
+    __tablename__: ClassVar[str] = "pipeline_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_key: str = Field(max_length=64, unique=True, index=True)
+    status: str = Field(max_length=32, index=True)
+    started_at: datetime = _tz_datetime()
+    finished_at: datetime | None = _tz_datetime(nullable=True)
+    duration_ms: int | None = Field(default=None)
+    config_hash: str | None = Field(default=None, max_length=64)
+    monitoring_version: str = Field(default="phase18-v1", max_length=32)
+    error_count: int = Field(default=0, ge=0)
+    skipped_count: int = Field(default=0, ge=0)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
+class PipelineStageRun(SQLModel, table=True):
+    """One stage inside a pipeline run. No job text or secrets."""
+
+    __tablename__: ClassVar[str] = "pipeline_stage_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    pipeline_run_id: int = Field(foreign_key="pipeline_runs.id", index=True)
+    stage: str = Field(max_length=64)
+    status: str = Field(max_length=32)
+    started_at: datetime = _tz_datetime()
+    finished_at: datetime | None = _tz_datetime(nullable=True)
+    duration_ms: int | None = Field(default=None)
+    error: str | None = Field(default=None, max_length=500)
+    counters: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+
+
 class RoleBaseline(SQLModel, table=True):
     """Per-role baseline resume built from aggregating ~15-20 JDs."""
 
