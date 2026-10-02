@@ -30,6 +30,7 @@ from scraper.discovery import DiscoveryPlan, build_discovery_plan, log_discovery
 from scraper.filters import evaluate
 from scraper.linkedin_jobspy import fetch_linkedin_indeed
 from scraper.models import RawPosting, to_job
+from scraper.structured_jd import attach_structured_jd
 from scraper.workday_rest import fetch_all_workday
 
 log = structlog.get_logger(__name__)
@@ -296,6 +297,14 @@ async def run_ingestion(
             except Exception as exc:
                 log.warning(
                     "eligibility_failed",
+                    company=saved.company,
+                    error=str(exc)[:200],
+                )
+            try:
+                await attach_structured_jd(session, saved)
+            except Exception as exc:
+                log.warning(
+                    "structured_jd_failed",
                     company=saved.company,
                     error=str(exc)[:200],
                 )

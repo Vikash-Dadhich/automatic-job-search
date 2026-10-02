@@ -409,6 +409,22 @@ class Job(SQLModel, table=True):
     updated_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
+class StructuredJobDescription(SQLModel, table=True):
+    """Derived reading of one normalized JD. Not a score and not a role label."""
+
+    __tablename__: ClassVar[str] = "structured_job_descriptions"
+    __table_args__ = (UniqueConstraint("job_id", name="uq_structured_jd_job"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="jobs.id", unique=True, index=True)
+    content_hash: str = Field(max_length=64, index=True)
+    version: str = Field(max_length=32, index=True)
+    availability: str = Field(max_length=16)
+    document: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+    updated_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
 class PlatformPacing(SQLModel, table=True):
     """Gap between apply sessions for one platform. The runner uses ``workday``."""
 
@@ -942,6 +958,19 @@ async def _find_cross_source_job(session: AsyncSession, job: Job) -> Job | None:
     return None
 
 
+async def _drop_structured_jd(session: AsyncSession, job_id: int | None) -> None:
+    """Forget a derived JD reading when the normalized text changes."""
+    if job_id is None:
+        return
+    statement = select(StructuredJobDescription).where(
+        col(StructuredJobDescription.job_id) == job_id
+    )
+    result = await session.exec(statement)
+    row = result.first()
+    if row is not None:
+        await session.delete(row)
+
+
 async def upsert_job(session: AsyncSession, job: Job) -> Job:
     """Insert a job or update mutable fields when the posting is already stored.
 
@@ -1046,6 +1075,7 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.eligibility_version = None
         existing.eligibility_content_hash = None
         existing.eligibility_profile_hash = None
+        await _drop_structured_jd(session, existing.id)
     if job.role_family is not None and (
         content_changed
         or not _role_classification_current(existing)
