@@ -488,6 +488,44 @@ class FeedbackSignal(SQLModel, table=True):
     adjustment: int = Field(default=0)
 
 
+class CalibrationRun(SQLModel, table=True):
+    """One temporal benchmark of feedback. It does not change scores."""
+
+    __tablename__: ClassVar[str] = "calibration_runs"
+
+    id: int | None = Field(default=None, primary_key=True)
+    version: str = Field(max_length=32, index=True)
+    config_hash: str = Field(max_length=64)
+    status: str = Field(max_length=32)
+    available_applications: int = Field(default=0, ge=0)
+    required_applications: int = Field(default=0, ge=0)
+    fold_count: int = Field(default=0, ge=0)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
+class CalibrationMetric(SQLModel, table=True):
+    """One holdout comparison. Raw application rows are not copied."""
+
+    __tablename__: ClassVar[str] = "calibration_metrics"
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="calibration_runs.id", index=True)
+    fold_id: str = Field(max_length=32)
+    dimension: str = Field(max_length=32)
+    segment: str = Field(max_length=64)
+    training_prediction: float | None = Field(default=None)
+    holdout_count: int = Field(default=0, ge=0)
+    holdout_positive_count: int = Field(default=0, ge=0)
+    holdout_rate: float | None = Field(default=None)
+    brier_score: float | None = Field(default=None)
+    baseline_brier_score: float | None = Field(default=None)
+    brier_delta: float | None = Field(default=None)
+    calibration_error: float | None = Field(default=None)
+    coverage: float | None = Field(default=None)
+    evidence_status: str = Field(max_length=32)
+    direction_match: bool | None = Field(default=None)
+
+
 class RoleBaseline(SQLModel, table=True):
     """Per-role baseline resume built from aggregating ~15-20 JDs."""
 
@@ -1414,6 +1452,42 @@ async def get_feedback_signals(session: AsyncSession, run_id: int) -> list[Feedb
         select(FeedbackSignal)
         .where(col(FeedbackSignal.run_id) == run_id)
         .order_by(col(FeedbackSignal.dimension), col(FeedbackSignal.segment))
+    )
+    result = await session.exec(statement)
+    return list(result.all())
+
+
+async def save_calibration_run(
+    session: AsyncSession,
+    run: CalibrationRun,
+    metrics: list[CalibrationMetric],
+) -> CalibrationRun:
+    session.add(run)
+    await session.flush()
+    for metric in metrics:
+        metric.run_id = run.id or 0
+        session.add(metric)
+    return run
+
+
+async def get_calibration_run(session: AsyncSession, run_id: int) -> CalibrationRun | None:
+    statement = select(CalibrationRun).where(col(CalibrationRun.id) == run_id)
+    result = await session.exec(statement)
+    return result.first()
+
+
+async def get_calibration_metrics(
+    session: AsyncSession,
+    run_id: int,
+) -> list[CalibrationMetric]:
+    statement = (
+        select(CalibrationMetric)
+        .where(col(CalibrationMetric.run_id) == run_id)
+        .order_by(
+            col(CalibrationMetric.fold_id),
+            col(CalibrationMetric.dimension),
+            col(CalibrationMetric.segment),
+        )
     )
     result = await session.exec(statement)
     return list(result.all())

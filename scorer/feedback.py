@@ -303,6 +303,16 @@ def _adjustment(
     return status, adjusted, amount
 
 
+def segment_for(
+    case: FeedbackCase,
+    dimension: str,
+    config: dict[str, Any] | None = None,
+) -> str | None:
+    """Segment label Phase 16 uses. Empty subfamilies return None."""
+    loaded = config if config is not None else load_feedback_config()
+    return _segment_value(case, dimension, loaded["feedback"]["bands"])
+
+
 def _segment_value(
     case: FeedbackCase,
     dimension: str,
