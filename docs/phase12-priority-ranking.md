@@ -1,5 +1,7 @@
 # Phase 12 priority ranking
 
+The current attention formula is Priority 2.0 in `docs/priority-2.md` (`phase12-v2`). The notes below describe the original `phase12-v1` shape. Fit is still read, not recalculated, and jobs are still not removed.
+
 Priority answers which stored job should be looked at first. Fit answers how well the candidate matches the description. Priority reads the fit number. It does not calculate it again, and it does not remove jobs.
 
 The result is `priority_score`, from 0 to 100, plus the component values and short factual reasons. `Job.score` stays the fit number. Tier and status are unchanged.

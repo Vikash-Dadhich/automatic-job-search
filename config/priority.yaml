@@ -1,21 +1,22 @@
-# Attention order for jobs already stored. This is not a fit score and not a filter.
-# Each component is scaled to 0-100, then combined by these weights.
-# Weights are integers that sum to 100. A missing component is left out and the
-# remaining weights are rescaled, so missing evidence is not stored as zero.
+# Attention order. This is not a fit score, not eligibility, and not a company ranking.
+# Each component is 0-100. Weights are integers that sum to 100.
+# A missing component is left out and the remaining weights are rescaled.
 
-version: phase12-v1
+version: phase12-v2
 
 weights:
-  fit: 40
-  role_family: 12
-  eligibility: 20
-  role_confidence: 5
-  jd_quality: 6
-  freshness: 7
-  dream_company: 5
-  workflow: 5
+  fit: 32
+  primary_role_alignment: 12
+  secondary_role_bonus: 3
+  eligibility: 16
+  role_confidence: 6
+  jd_evidence_quality: 6
+  program_evidence: 7
+  company_domain_relevance: 5
+  freshness: 6
+  dream_company: 4
+  workflow: 3
 
-# How each raw signal maps onto 0-100 before weighting.
 scales:
   eligibility:
     CONFIRMED_ELIGIBLE: 100
@@ -28,7 +29,7 @@ scales:
     low: 50
   jd_quality:
     present: 100
-    truncated: 55
+    truncated: 40
     suspicious: 40
     missing: 40
     unknown: 70
@@ -37,6 +38,52 @@ scales:
     acted: 0
     closed: 40
   freshness:
-    # 100 today, falling to floor at horizon_days, then staying at floor.
     floor: 40
     horizon_days: 45
+  primary_role:
+    PRODUCT_MANAGEMENT: 100
+    CONSULTING: 100
+    STRATEGY_TRANSFORMATION: 70
+    PRODUCT_MARKETING: 45
+    MARKETING: 45
+    PROGRAM_PROJECT_OPERATIONS: 45
+
+# Search relevance of a factual company domain. Not company quality.
+domains:
+  PRODUCT_MANAGEMENT:
+    - software
+    - cloud
+    - artificial_intelligence
+    - enterprise_software
+    - consumer_technology
+    - payments
+    - fintech
+    - ecommerce
+  CONSULTING:
+    - consulting
+    - professional_services
+  STRATEGY_TRANSFORMATION:
+    - software
+    - cloud
+    - artificial_intelligence
+    - financial_services
+    - banking
+    - payments
+    - fintech
+    - consulting
+    - professional_services
+  PRODUCT_MARKETING:
+    - consumer_technology
+    - ecommerce
+    - retail
+    - media
+  MARKETING:
+    - media
+    - retail
+    - consumer_technology
+    - ecommerce
+  PROGRAM_PROJECT_OPERATIONS:
+    - software
+    - enterprise_software
+    - consulting
+    - professional_services

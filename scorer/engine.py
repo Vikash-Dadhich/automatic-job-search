@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlmodel import col, select
@@ -181,14 +182,57 @@ class _JobOutcome:
     detail: str | None = None
 
 
-def _attach_priority(job: Job, profile: Profile) -> None:
+def _attach_priority(
+    job: Job,
+    profile: Profile,
+    *,
+    structured: Any = None,
+    company_context: Any = None,
+) -> None:
     """Record attention order. A failure here does not change fit, tier, or status."""
     try:
         from scorer.priority import apply_priority
 
-        apply_priority(job, profile)
+        apply_priority(
+            job,
+            profile,
+            structured=structured,
+            company_context=company_context,
+        )
     except Exception as exc:
         log.warning("priority_failed", job_id=job.id, error=str(exc)[:200])
+
+
+async def _priority_evidence(session: Any, job: Job) -> tuple[Any, Any]:
+    """Structured JD and company context. A lookup failure leaves priority computable."""
+    structured = None
+    company = None
+    try:
+        if job.id is not None:
+            from scraper.structured_jd import StructuredJdDocument, get_structured_jd
+
+            row = await get_structured_jd(session, job.id)
+            if row is not None and row.availability != "unavailable" and row.document:
+                structured = StructuredJdDocument.model_validate(row.document)
+    except Exception as exc:
+        log.warning("priority_structured_jd_unavailable", job_id=job.id, error=str(exc)[:200])
+    try:
+        if job.company_intelligence_id is not None:
+            from sqlmodel import select
+
+            from core.db import CompanyIntelligence
+
+            result = await session.exec(
+                select(CompanyIntelligence).where(
+                    CompanyIntelligence.id == job.company_intelligence_id
+                )
+            )
+            record = result.first()
+            if record is not None and isinstance(record.context, dict):
+                company = record.context
+    except Exception as exc:
+        log.warning("priority_company_context_unavailable", job_id=job.id, error=str(exc)[:200])
+    return structured, company
 
 
 def _hard_blocked(job: Job, profile: Profile, cooldown: set[str]) -> bool:
@@ -684,7 +728,13 @@ class Scorer:
                     target.fit_profile_hash = evaluation.fit_profile_hash
                     target.justification = evaluation.reasons
                     target.updated_at = now
-                    _attach_priority(target, profile)
+                    structured, company = await _priority_evidence(session, target)
+                    _attach_priority(
+                        target,
+                        profile,
+                        structured=structured,
+                        company_context=company,
+                    )
                     session.add(target)
                     return _JobOutcome(kind="unavailable", job_id=job.id)
 
@@ -706,7 +756,13 @@ class Scorer:
                 target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
                 target.fit_profile_hash = evaluation.fit_profile_hash
                 target.updated_at = now
-                _attach_priority(target, profile)
+                structured, company = await _priority_evidence(session, target)
+                _attach_priority(
+                    target,
+                    profile,
+                    structured=structured,
+                    company_context=company,
+                )
                 session.add(target)
 
             if new_status == Status.staged:

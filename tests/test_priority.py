@@ -52,7 +52,7 @@ def _job(external_id: str = "p1", **kwargs: object) -> Job:
 def test_weights_sum_to_100() -> None:
     weights = load_priority_config()["weights"]
     assert sum(weights.values()) == 100
-    assert PRIORITY_VERSION == "phase12-v1"
+    assert PRIORITY_VERSION == "phase12-v2"
 
 
 def test_fit_and_role_family_order_attention(profile: Profile) -> None:

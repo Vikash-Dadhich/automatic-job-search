@@ -17,18 +17,37 @@ from core.db import Job, Status
 from scorer.engine import is_dream_company
 from scorer.role_weights import get_role_family_weight, load_role_family_weights
 
-PRIORITY_VERSION = "phase12-v1"
+PRIORITY_VERSION = "phase12-v2"
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "priority.yaml"
 _COMPONENTS = (
     "fit",
-    "role_family",
+    "primary_role_alignment",
+    "secondary_role_bonus",
     "eligibility",
     "role_confidence",
-    "jd_quality",
+    "jd_evidence_quality",
+    "program_evidence",
+    "company_domain_relevance",
     "freshness",
     "dream_company",
     "workflow",
 )
+_PROGRAM_LEVELS = {
+    "mba_internship_program": 100,
+    "full_time_mba_recruiting": 100,
+    "mba_recruiting": 100,
+    "business_school_recruiting": 100,
+    "summer_internship_program": 70,
+    "graduate_internship_program": 70,
+    "us_internship_program": 70,
+    "internship_program": 40,
+    "us_operations": 50,
+    "us_office": 50,
+    "us_headquarters": 50,
+    "us_careers": 40,
+    "us_recruiting": 40,
+}
+_NO_ROLE_BONUS = frozenset({"OTHER", "UNKNOWN", ""})
 _OPEN = {
     Status.discovered,
     Status.scored,
@@ -67,9 +86,15 @@ def _validate(raw: object) -> dict[str, Any]:
     if sum(parsed.values()) != 100:
         raise ValueError("priority weights must sum to 100")
     scales = raw.get("scales")
-    if not isinstance(scales, dict):
-        raise ValueError("priority scales must be a mapping")
-    return {"version": PRIORITY_VERSION, "weights": parsed, "scales": scales}
+    domains = raw.get("domains")
+    if not isinstance(scales, dict) or not isinstance(domains, dict):
+        raise ValueError("priority scales and domains must be mappings")
+    return {
+        "version": PRIORITY_VERSION,
+        "weights": parsed,
+        "scales": scales,
+        "domains": domains,
+    }
 
 
 @lru_cache
@@ -137,17 +162,6 @@ def role_confidence_component(job: Job, config: dict[str, Any]) -> int | None:
     return _scale(config, "role_confidence", level)
 
 
-def jd_quality_component(job: Job, config: dict[str, Any]) -> int:
-    if job.jd_truncated is True or job.jd_status == "truncated":
-        return _scale(config, "jd_quality", "truncated")
-    status = job.jd_status or ""
-    if status in {"present", "suspicious", "missing"}:
-        return _scale(config, "jd_quality", status)
-    if not (job.description_clean or "").strip():
-        return _scale(config, "jd_quality", "missing")
-    return _scale(config, "jd_quality", "unknown")
-
-
 def freshness_component(
     job: Job,
     config: dict[str, Any],
@@ -176,6 +190,125 @@ def dream_company_component(job: Job, profile: Profile) -> int | None:
     return 100 if is_dream_company(job.company or "", profile) else 0
 
 
+def primary_role_alignment(job: Job, config: dict[str, Any]) -> int | None:
+    """Target-search alignment of the primary family. Not the portfolio weight."""
+    family = (job.role_family or "").strip()
+    if family in _NO_ROLE_BONUS:
+        return None
+    block = config["scales"].get("primary_role")
+    if not isinstance(block, dict) or family not in block:
+        return None
+    return _require_int(f"primary_role.{family}", block[family])
+
+
+def secondary_role_bonus(job: Job, config: dict[str, Any]) -> int | None:
+    """Small extra for a second function the role performs. Not a second full weight."""
+    family = (job.role_secondary_family or "").strip()
+    primary = (job.role_family or "").strip()
+    if family in _NO_ROLE_BONUS or family == primary:
+        return None
+    block = config["scales"].get("primary_role")
+    if not isinstance(block, dict) or family not in block:
+        return None
+    return 100
+
+
+def jd_evidence_quality_component(
+    job: Job,
+    config: dict[str, Any],
+    structured: Any = None,
+) -> int:
+    """Evidence completeness. A long description is not automatically better."""
+    if job.jd_truncated is True or job.jd_status == "truncated":
+        return _scale(config, "jd_quality", "truncated")
+    status = job.jd_status or ""
+    if status in {"suspicious", "missing"}:
+        return _scale(config, "jd_quality", status)
+    if not (job.description_clean or "").strip():
+        return _scale(config, "jd_quality", "missing")
+    explicit = _explicit_sections(structured)
+    if explicit is None:
+        return 80
+    return max(80, min(100, 80 + _half_up_ratio(20 * explicit, 7)))
+
+
+def _explicit_sections(structured: Any) -> int | None:
+    if structured is None or getattr(structured, "availability", None) == "unavailable":
+        return None
+    names = (
+        "responsibilities",
+        "qualifications",
+        "experience",
+        "education",
+        "functional",
+        "program",
+        "work_model",
+    )
+    count = 0
+    for name in names:
+        section = getattr(structured, name, None)
+        if getattr(section, "state", None) == "explicit":
+            count += 1
+    return count
+
+
+def program_evidence_component(job: Job, structured: Any, company: Any) -> int | None:
+    """Strongest internship or U.S. program fact. Related facts are not added together."""
+    del job
+    level: int | None = None
+    for item in _company_signals(company):
+        name = str(item.get("signal") or "")
+        if name in _PROGRAM_LEVELS and item.get("value") is True:
+            level = max(level or 0, _PROGRAM_LEVELS[name])
+        if name in _PROGRAM_LEVELS and item.get("value") is False:
+            continue
+    program = getattr(structured, "program", None)
+    if getattr(program, "mba_internship", None) is True:
+        level = max(level or 0, 100)
+    elif getattr(program, "summer_internship", None) is True:
+        level = max(level or 0, 70)
+    elif getattr(program, "internship", None) is True:
+        level = max(level or 0, 40)
+    return level
+
+
+def company_domain_component(job: Job, config: dict[str, Any], company: Any) -> int | None:
+    """One capped point if a factual domain matches the target families. Not quality."""
+    allowed = _relevant_domains(job, config)
+    if not allowed:
+        return None
+    found = {
+        str(item.get("value"))
+        for item in _company_signals(company)
+        if str(item.get("signal") or "").startswith("domain:")
+    }
+    if not found & allowed:
+        return None
+    return 100
+
+
+def _relevant_domains(job: Job, config: dict[str, Any]) -> set[str]:
+    mapping = config.get("domains")
+    if not isinstance(mapping, dict):
+        return set()
+    names = {job.role_family, job.role_secondary_family}
+    found: set[str] = set()
+    for name in names:
+        values = mapping.get(name)
+        if isinstance(values, list):
+            found.update(str(item) for item in values)
+    return found
+
+
+def _company_signals(company: Any) -> list[dict[str, Any]]:
+    if not isinstance(company, dict):
+        return []
+    raw = company.get("signals")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
 def workflow_component(job: Job, config: dict[str, Any]) -> int:
     status = job.status
     if status in _ACTED:
@@ -193,13 +326,18 @@ def _components(
     config: dict[str, Any],
     *,
     now: datetime,
+    structured: Any = None,
+    company_context: Any = None,
 ) -> dict[str, int | None]:
     return {
         "fit": fit_component(job),
-        "role_family": role_family_component(job),
+        "primary_role_alignment": primary_role_alignment(job, config),
+        "secondary_role_bonus": secondary_role_bonus(job, config),
         "eligibility": eligibility_component(job, config),
         "role_confidence": role_confidence_component(job, config),
-        "jd_quality": jd_quality_component(job, config),
+        "jd_evidence_quality": jd_evidence_quality_component(job, config, structured),
+        "program_evidence": program_evidence_component(job, structured, company_context),
+        "company_domain_relevance": company_domain_component(job, config, company_context),
         "freshness": freshness_component(job, config, now=now),
         "dream_company": dream_company_component(job, profile),
         "workflow": workflow_component(job, config),
@@ -218,21 +356,46 @@ def _combine(components: dict[str, int | None], weights: dict[str, int]) -> int:
 
 def _reasons(job: Job, components: dict[str, int | None]) -> list[str]:
     lines: list[str] = []
-    if components["fit"] is None:
+    fit = components["fit"]
+    if fit is None:
         lines.append("Candidate-job fit is not available.")
+    elif fit >= 75:
+        lines.append("Strong candidate-job fit.")
     else:
-        lines.append(f"Candidate-job fit is {components['fit']}.")
-    family = job.role_family or "UNKNOWN"
-    weight = get_role_family_weight(job.role_family)
-    lines.append(f"Role family {family} has portfolio weight {weight}.")
-    if components["eligibility"] is None:
-        lines.append("Eligibility has not been recorded.")
-    else:
-        lines.append(f"Eligibility is {job.eligibility_state}.")
+        lines.append(f"Candidate-job fit is {fit}.")
+    alignment = components["primary_role_alignment"]
+    if alignment == 100:
+        lines.append("Tier 1 target role family.")
+    elif alignment == 70:
+        lines.append("Tier 2 target role family.")
+    elif alignment is not None:
+        lines.append("Additional target role family.")
+    if components["secondary_role_bonus"] is not None:
+        lines.append(f"Secondary {job.role_secondary_family} responsibility.")
+    state = job.eligibility_state
+    if state == "CONFIRMED_ELIGIBLE":
+        lines.append("Eligibility confirmed.")
+    elif state == "UNKNOWN":
+        lines.append("Eligibility unknown.")
+    elif state == "CLEARLY_INELIGIBLE":
+        lines.append("Eligibility is clearly ineligible.")
+    elif state:
+        lines.append(f"Eligibility is {state}.")
+    if components["role_confidence"] == 100:
+        lines.append("High-confidence role classification.")
+    program = components["program_evidence"]
+    if program == 100:
+        lines.append("Explicit MBA internship program evidence.")
+    elif program is not None and program >= 70:
+        lines.append("Explicit internship program evidence.")
+    elif program is not None:
+        lines.append("General internship program evidence.")
+    if components["company_domain_relevance"] == 100:
+        lines.append("Relevant company domain evidence.")
+    if components["jd_evidence_quality"] is not None and components["jd_evidence_quality"] <= 40:
+        lines.append("Limited JD evidence.")
     if job.jd_truncated is True or job.jd_status == "truncated":
         lines.append("The job description is truncated.")
-    elif job.jd_status == "missing" or not (job.description_clean or "").strip():
-        lines.append("The job description is missing.")
     if components["freshness"] is None:
         lines.append("No posted or discovered time is available.")
     elif job.posted_at is not None:
@@ -252,25 +415,71 @@ def _freshness_day(now: datetime | None) -> str:
     return moment.date().isoformat()
 
 
+def _relevant_company_signals(company: Any) -> list[dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    for item in _company_signals(company):
+        name = str(item.get("signal") or "")
+        if name.startswith("domain:") or name in _PROGRAM_LEVELS:
+            kept.append({"signal": name, "value": item.get("value")})
+    return sorted(kept, key=lambda item: (item["signal"], str(item["value"])))
+
+
+def _structured_view(structured: Any) -> dict[str, Any] | None:
+    if structured is None:
+        return None
+    sections = {}
+    for name in (
+        "responsibilities",
+        "qualifications",
+        "experience",
+        "education",
+        "functional",
+        "program",
+        "work_model",
+    ):
+        section = getattr(structured, name, None)
+        sections[name] = getattr(section, "state", None)
+    program = getattr(structured, "program", None)
+    return {
+        "version": getattr(structured, "version", None),
+        "availability": getattr(structured, "availability", None),
+        "sections": sections,
+        "mba_internship": getattr(program, "mba_internship", None),
+        "summer_internship": getattr(program, "summer_internship", None),
+        "internship": getattr(program, "internship", None),
+    }
+
+
 def _input_hash(
     job: Job,
     profile: Profile,
     config: dict[str, Any],
     *,
     now: datetime | None = None,
+    structured: Any = None,
+    company_context: Any = None,
 ) -> str:
     dreams = sorted(name.strip() for name in profile.preferences.dream_companies if name.strip())
     payload = {
         "version": PRIORITY_VERSION,
         "weights": config["weights"],
         "scales": config["scales"],
+        "domains": config.get("domains"),
         "score": job.score,
+        "fit_version": job.fit_version,
         "role_family": job.role_family,
+        "role_subfamily": job.role_subfamily,
         "role_confidence": job.role_confidence,
+        "role_classifier_version": job.role_classifier_version,
+        "role_secondary_family": job.role_secondary_family,
+        "role_secondary_subfamily": job.role_secondary_subfamily,
+        "role_secondary_confidence": job.role_secondary_confidence,
         "eligibility_state": job.eligibility_state,
+        "eligibility_version": job.eligibility_version,
         "jd_status": job.jd_status,
         "jd_truncated": job.jd_truncated,
-        "jd_char_count": job.jd_char_count,
+        "structured": _structured_view(structured),
+        "company_signals": _relevant_company_signals(company_context),
         "posted_at": _iso(job.posted_at),
         "discovered_at": _iso(job.discovered_at),
         "company": job.company,
@@ -282,13 +491,28 @@ def _input_hash(
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def priority_is_current(job: Job, profile: Profile, *, now: datetime | None = None) -> bool:
+def priority_is_current(
+    job: Job,
+    profile: Profile,
+    *,
+    now: datetime | None = None,
+    structured: Any = None,
+    company_context: Any = None,
+) -> bool:
     config = load_priority_config()
     return bool(
         job.priority_score is not None
         and job.priority_version == PRIORITY_VERSION
         and job.priority_input_hash
-        and job.priority_input_hash == _input_hash(job, profile, config, now=now)
+        and job.priority_input_hash
+        == _input_hash(
+            job,
+            profile,
+            config,
+            now=now,
+            structured=structured,
+            company_context=company_context,
+        )
         and job.priority_components
     )
 
@@ -298,17 +522,33 @@ def calculate_priority(
     profile: Profile,
     *,
     now: datetime | None = None,
+    structured: Any = None,
+    company_context: Any = None,
 ) -> PriorityDecision:
     """Rank one stored job. Does not write the row and does not change fit."""
     config = load_priority_config()
     moment = _as_utc(now) or datetime.now(UTC)
-    parts = _components(job, profile, config, now=moment)
+    parts = _components(
+        job,
+        profile,
+        config,
+        now=moment,
+        structured=structured,
+        company_context=company_context,
+    )
     return PriorityDecision(
         score=_combine(parts, config["weights"]),
         version=PRIORITY_VERSION,
         reasons=_reasons(job, parts),
         components=parts,
-        input_hash=_input_hash(job, profile, config, now=moment),
+        input_hash=_input_hash(
+            job,
+            profile,
+            config,
+            now=moment,
+            structured=structured,
+            company_context=company_context,
+        ),
     )
 
 
@@ -317,13 +557,21 @@ def apply_priority(
     profile: Profile,
     *,
     now: datetime | None = None,
+    structured: Any = None,
+    company_context: Any = None,
 ) -> PriorityDecision:
     """Store priority fields. Fit, eligibility, role, and status stay as they are.
 
     The same UTC calendar day reuses the stored score. A later day recomputes
     freshness. The hash stores that date, not the exact clock time.
     """
-    if priority_is_current(job, profile, now=now):
+    if priority_is_current(
+        job,
+        profile,
+        now=now,
+        structured=structured,
+        company_context=company_context,
+    ):
         components = job.priority_components if isinstance(job.priority_components, dict) else {}
         return PriorityDecision(
             score=int(job.priority_score or 0),
@@ -332,7 +580,13 @@ def apply_priority(
             components=components,
             input_hash=str(job.priority_input_hash or ""),
         )
-    decision = calculate_priority(job, profile, now=now)
+    decision = calculate_priority(
+        job,
+        profile,
+        now=now,
+        structured=structured,
+        company_context=company_context,
+    )
     job.priority_score = decision.score
     job.priority_version = decision.version
     job.priority_reasons = list(decision.reasons)
