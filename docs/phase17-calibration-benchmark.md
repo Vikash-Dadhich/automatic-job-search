@@ -8,6 +8,8 @@ An application is matured when `submitted_at` plus `evaluation_maturity_days` (d
 
 The baseline prediction is the training-window strong-positive rate. The feedback prediction is the segment's shrunk rate from that same window when Phase 16 marked the segment sufficient. Otherwise the baseline is used. The holdout does not decide the fallback.
 
+The same folds are scored a second time against offers only. That uses the training-window offer rate Phase 16 already stores (`final_positive_rate`). It does not fit a new model, and it does not use the shrunk interview-or-offer rate as an offer prediction. A segment without enough training evidence falls back to the overall training offer rate. Interview without an offer counts for the first benchmark and not the second. Metrics for that pass use the dimension prefix `final_positive:`. Top-slice rates stay on the interview-or-offer target.
+
 Brier score is the mean squared error of those predictions against 1 or 0. Calibration error is the absolute gap between the training prediction and the holdout rate. Coverage is the share of evaluated holdout applications that had a sufficient training segment. A negative Brier gap means feedback's error was lower in that fold. The report does not name a winner.
 
 Folds are expanding chronological windows, up to `fold_count` (default 3). A fold is kept only when both the training minimum and the holdout minimum are met. If none are met, the report status is `insufficient_history` and no metrics are invented.

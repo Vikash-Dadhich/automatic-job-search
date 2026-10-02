@@ -212,6 +212,90 @@ def test_too_little_history_is_a_report_not_a_failure() -> None:
     assert report.required_applications == 40
 
 
+async def test_offer_is_scored_separately_from_interview(db_ready: Path) -> None:
+    del db_ready
+    training = [
+        _case(1, 0, [("offer", 0), ("interview", 0), ("screening", 0)]),
+        _case(2, 0, [("offer", 0)]),
+        _case(3, 0, [("rejected", 0)], role_family="OTHER", role_subfamily=None),
+        _case(4, 0, [("offer", 40)], role_family="OTHER", role_subfamily=None),
+    ]
+    interview_only = _case(5, 30, [("interview", 0), ("screening", 0)])
+    offered = _case(6, 31, [("screening", 0), ("interview", 0), ("offer", 1)])
+    silent = _case(7, 32, [])
+    other_holdout = _case(8, 33, [("rejected", 0)], role_family="OTHER", role_subfamily=None)
+    settings = _calibration(
+        fold_count=1,
+        evaluation_maturity_days=0,
+        minimum_training_applications=4,
+        minimum_holdout_applications=1,
+        minimum_holdout_segment=1,
+    )
+    learned = _feedback(
+        minimum_overall=1,
+        minimum_segment=2,
+        minimum_subfamily=2,
+        shrinkage_prior=0,
+    )
+    cases = training + [interview_only, offered, silent, other_holdout]
+    report = build_calibration(cases, config=settings, feedback_config=learned)
+    again = build_calibration(cases, config=settings, feedback_config=learned)
+    assert again == report
+    strong = _rows(report, "role_family", "PRODUCT_MANAGEMENT")[0]
+    final = _rows(report, "final_positive:role_family", "PRODUCT_MANAGEMENT")[0]
+    assert strong.holdout_positive_count == 2
+    assert strong.holdout_rate == 1.0
+    assert final.holdout_count == 2
+    assert final.holdout_positive_count == 1
+    assert final.holdout_rate == 0.5
+    assert final.training_prediction == 1.0
+    assert final.calibration_error == 0.5
+    other = _rows(report, "final_positive:role_family", "OTHER")[0]
+    assert other.training_prediction == 0.0
+    assert load_feedback_config()["feedback"]["priority_integration"] is False
+    rolled = _rows(report, "final_positive:overall", "all")[0]
+    assert rolled.holdout_count == 3
+    assert silent.application_id in report.folds[0].holdout_ids
+    assert report.folds[0].evaluated_applications == 3
+    assert "hypothetical_priority_topk" not in {item.dimension for item in report.metrics}
+    saved_id = await persist_calibration(report)
+    _run, stored = await load_persisted_calibration(saved_id)
+    stored_dims = {row.dimension for row in stored}
+    assert "role_family" in stored_dims
+    assert "final_positive:role_family" in stored_dims
+
+
+def test_sparse_offer_rate_falls_back_to_the_training_baseline() -> None:
+    training = [
+        _case(1, 0, [("offer", 0)]),
+        _case(2, 0, [("rejected", 0)], role_family="OTHER", role_subfamily=None),
+    ]
+    holdout = [_case(3, 10, [("interview", 0)])]
+    settings = _calibration(
+        fold_count=1,
+        evaluation_maturity_days=45,
+        minimum_training_applications=2,
+        minimum_holdout_applications=1,
+        minimum_holdout_segment=1,
+    )
+    learned = _feedback(minimum_overall=1, minimum_segment=10, shrinkage_prior=0)
+    immature = build_calibration(training + holdout, config=settings, feedback_config=learned)
+    assert immature.folds[0].matured_holdout_applications == 0
+    matured = _calibration(
+        fold_count=1,
+        evaluation_maturity_days=0,
+        minimum_training_applications=2,
+        minimum_holdout_applications=1,
+        minimum_holdout_segment=1,
+    )
+    report = build_calibration(training + holdout, config=matured, feedback_config=learned)
+    row = _rows(report, "final_positive:role_family", "PRODUCT_MANAGEMENT")[0]
+    assert row.evidence_status == "insufficient_evidence"
+    assert row.training_prediction == 0.5
+    assert row.holdout_positive_count == 0
+    assert row.holdout_count == 1
+
+
 async def test_persisted_calibration_leaves_scores_and_events_unchanged(db_ready: Path) -> None:
     del db_ready
     async with session_scope() as session:

@@ -306,6 +306,180 @@ def _topk_count(total: int, fraction: float) -> int:
     return count
 
 
+def _append_short_target(
+    metrics: list[CalibrationMetricRow],
+    *,
+    fold_id: str,
+    evaluated: list[tuple[FeedbackCase, set[str]]],
+    baseline: float,
+    labels: list[str],
+    dimension: str,
+) -> None:
+    positives = sum(1 for _case, found in evaluated if _hit(found, labels))
+    metrics.append(
+        CalibrationMetricRow(
+            fold_id=fold_id,
+            dimension=dimension,
+            segment="all",
+            training_prediction=baseline,
+            holdout_count=len(evaluated),
+            holdout_positive_count=positives,
+            holdout_rate=_rate(positives, len(evaluated)),
+            brier_score=None,
+            baseline_brier_score=None,
+            brier_delta=None,
+            calibration_error=None,
+            coverage=None,
+            evidence_status=INSUFFICIENT,
+            direction_match=None,
+        )
+    )
+
+
+def _named(prefix: str, dimension: str) -> str:
+    if not prefix:
+        return dimension
+    return f"{prefix}:{dimension}"
+
+
+def _stored_rate(signal: FeedbackObservation | None, key: str) -> float | None:
+    if signal is None:
+        return None
+    value = signal.rates.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _append_target_metrics(
+    metrics: list[CalibrationMetricRow],
+    *,
+    fold_id: str,
+    evaluated: list[tuple[FeedbackCase, set[str]]],
+    dimensions: list[str],
+    feedback_config: dict[str, Any],
+    signals: dict[tuple[str, str], FeedbackObservation],
+    baseline: float,
+    rate_key: str,
+    outcome_labels: list[str],
+    prefix: str,
+    holdout_min: int,
+    holdout_segment_min: int,
+    use_adjusted_rate: bool,
+) -> None:
+    """Score one outcome definition. Strong-positive keeps the shrunk rate."""
+    for dimension in dimensions:
+        pairs_feedback: list[tuple[float, int]] = []
+        pairs_baseline: list[tuple[float, int]] = []
+        supported = 0
+        grouped: _SegmentRows = {}
+        for case, labels in evaluated:
+            predicted, used, signal = _predict(case, dimension, feedback_config, signals, baseline)
+            if not use_adjusted_rate:
+                predicted = baseline
+                segment_rate = _stored_rate(signal, rate_key)
+                if used and segment_rate is not None:
+                    predicted = segment_rate
+            actual = 1 if _hit(labels, outcome_labels) else 0
+            pairs_feedback.append((predicted, actual))
+            pairs_baseline.append((baseline, actual))
+            if used:
+                supported += 1
+            segment = segment_for(case, dimension, feedback_config) or "missing"
+            if dimension == "overall":
+                segment = "all"
+            grouped.setdefault(segment, []).append((case, labels, predicted, signal))
+        feedback_brier = brier_score(pairs_feedback)
+        baseline_brier = brier_score(pairs_baseline)
+        delta = None
+        if feedback_brier is not None and baseline_brier is not None:
+            delta = round(feedback_brier - baseline_brier, 6)
+        coverage = round(supported / len(evaluated), 6) if dimension != "overall" else None
+        name = _named(prefix, dimension)
+        metrics.append(
+            CalibrationMetricRow(
+                fold_id=fold_id,
+                dimension=name,
+                segment="all",
+                training_prediction=baseline,
+                holdout_count=len(evaluated),
+                holdout_positive_count=sum(item[1] for item in pairs_feedback),
+                holdout_rate=_rate(sum(item[1] for item in pairs_feedback), len(evaluated)),
+                brier_score=feedback_brier,
+                baseline_brier_score=baseline_brier,
+                brier_delta=delta,
+                calibration_error=None,
+                coverage=coverage,
+                evidence_status=SUFFICIENT if len(evaluated) >= holdout_min else INSUFFICIENT,
+                direction_match=None,
+            )
+        )
+        if dimension == "overall":
+            continue
+        for segment in sorted(grouped):
+            rows = grouped[segment]
+            positives = sum(
+                1 for _case, labels, _pred, _signal in rows if _hit(labels, outcome_labels)
+            )
+            hold_rate = _rate(positives, len(rows))
+            signal = rows[0][3]
+            training_ok = signal is not None and signal.evidence_status == SUFFICIENT
+            predicted = baseline
+            adjusted = None if signal is None else signal.adjusted_rate
+            if use_adjusted_rate and training_ok and adjusted is not None:
+                predicted = adjusted
+            if not use_adjusted_rate and training_ok:
+                segment_rate = _stored_rate(signal, rate_key)
+                if segment_rate is not None:
+                    predicted = segment_rate
+            status = INSUFFICIENT
+            if training_ok and len(rows) >= holdout_segment_min:
+                status = SUFFICIENT
+            error = None
+            if hold_rate is not None:
+                error = round(abs(predicted - hold_rate), 6)
+            adjustment = 0 if signal is None else signal.adjustment
+            actuals = [
+                (predicted, 1 if _hit(labels, outcome_labels) else 0)
+                for _case, labels, _pred, _signal in rows
+            ]
+            base_pairs = [
+                (baseline, 1 if _hit(labels, outcome_labels) else 0)
+                for _case, labels, _pred, _signal in rows
+            ]
+            matched = None
+            if status == SUFFICIENT and use_adjusted_rate:
+                matched = _direction(adjustment, hold_rate, baseline)
+            if status == SUFFICIENT and not use_adjusted_rate:
+                matched = _rate_direction(predicted, baseline, hold_rate)
+            metrics.append(
+                CalibrationMetricRow(
+                    fold_id=fold_id,
+                    dimension=name,
+                    segment=segment,
+                    training_prediction=predicted,
+                    holdout_count=len(rows),
+                    holdout_positive_count=positives,
+                    holdout_rate=hold_rate,
+                    brier_score=brier_score(actuals),
+                    baseline_brier_score=brier_score(base_pairs),
+                    brier_delta=None,
+                    calibration_error=error,
+                    coverage=None,
+                    evidence_status=status,
+                    direction_match=matched,
+                )
+            )
+
+
+def _rate_direction(predicted: float, baseline: float, holdout_rate: float | None) -> bool | None:
+    if holdout_rate is None or predicted == baseline:
+        return None
+    if predicted > baseline:
+        return holdout_rate > baseline
+    return holdout_rate < baseline
+
+
 def build_calibration(
     cases: list[FeedbackCase],
     *,
@@ -367,121 +541,56 @@ def build_calibration(
                 holdout_ids=tuple(case.application_id for case in hold),
             )
         )
+        final_labels = list(block["final_positive"])
+        final_baseline = 0.0 if overall is None else float(overall.rates["final_positive_rate"])
         if len(evaluated) < holdout_min:
-            metrics.append(
-                CalibrationMetricRow(
-                    fold_id=fold_id,
-                    dimension="overall",
-                    segment="all",
-                    training_prediction=baseline,
-                    holdout_count=len(evaluated),
-                    holdout_positive_count=0,
-                    holdout_rate=_rate(
-                        sum(1 for _case, labels in evaluated if _hit(labels, strong_labels)),
-                        len(evaluated),
-                    ),
-                    brier_score=None,
-                    baseline_brier_score=None,
-                    brier_delta=None,
-                    calibration_error=None,
-                    coverage=None,
-                    evidence_status=INSUFFICIENT,
-                    direction_match=None,
-                )
+            _append_short_target(
+                metrics,
+                fold_id=fold_id,
+                evaluated=evaluated,
+                baseline=baseline,
+                labels=strong_labels,
+                dimension="overall",
+            )
+            _append_short_target(
+                metrics,
+                fold_id=fold_id,
+                evaluated=evaluated,
+                baseline=final_baseline,
+                labels=final_labels,
+                dimension="final_positive:overall",
             )
             continue
-        for dimension in dimensions:
-            pairs_feedback: list[tuple[float, int]] = []
-            pairs_baseline: list[tuple[float, int]] = []
-            supported = 0
-            grouped: _SegmentRows = {}
-            for case, labels in evaluated:
-                predicted, used, signal = _predict(case, dimension, learned, signals, baseline)
-                actual = 1 if _hit(labels, strong_labels) else 0
-                pairs_feedback.append((predicted, actual))
-                pairs_baseline.append((baseline, actual))
-                if used:
-                    supported += 1
-                segment = segment_for(case, dimension, learned) or "missing"
-                if dimension == "overall":
-                    segment = "all"
-                grouped.setdefault(segment, []).append((case, labels, predicted, signal))
-            feedback_brier = brier_score(pairs_feedback)
-            baseline_brier = brier_score(pairs_baseline)
-            delta = None
-            if feedback_brier is not None and baseline_brier is not None:
-                delta = round(feedback_brier - baseline_brier, 6)
-            coverage = round(supported / len(evaluated), 6) if dimension != "overall" else None
-            metrics.append(
-                CalibrationMetricRow(
-                    fold_id=fold_id,
-                    dimension=dimension,
-                    segment="all",
-                    training_prediction=baseline,
-                    holdout_count=len(evaluated),
-                    holdout_positive_count=sum(actual for _predicted, actual in pairs_feedback),
-                    holdout_rate=_rate(
-                        sum(actual for _predicted, actual in pairs_feedback),
-                        len(evaluated),
-                    ),
-                    brier_score=feedback_brier,
-                    baseline_brier_score=baseline_brier,
-                    brier_delta=delta,
-                    calibration_error=None,
-                    coverage=coverage,
-                    evidence_status=SUFFICIENT if len(evaluated) >= holdout_min else INSUFFICIENT,
-                    direction_match=None,
-                )
-            )
-            if dimension == "overall":
-                continue
-            for segment in sorted(grouped):
-                rows = grouped[segment]
-                positives = sum(
-                    1 for _case, labels, _pred, _signal in rows if _hit(labels, strong_labels)
-                )
-                hold_rate = _rate(positives, len(rows))
-                signal = rows[0][3]
-                training_ok = signal is not None and signal.evidence_status == SUFFICIENT
-                predicted = baseline
-                if training_ok and signal is not None and signal.adjusted_rate is not None:
-                    predicted = signal.adjusted_rate
-                status = INSUFFICIENT
-                if training_ok and len(rows) >= holdout_segment_min:
-                    status = SUFFICIENT
-                error = None
-                if hold_rate is not None:
-                    error = round(abs(predicted - hold_rate), 6)
-                adjustment = 0 if signal is None else signal.adjustment
-                actuals = [
-                    (predicted, 1 if _hit(labels, strong_labels) else 0)
-                    for _case, labels, _pred, _signal in rows
-                ]
-                base_pairs = [
-                    (baseline, 1 if _hit(labels, strong_labels) else 0)
-                    for _case, labels, _pred, _signal in rows
-                ]
-                matched = None
-                if status == SUFFICIENT:
-                    matched = _direction(adjustment, hold_rate, baseline)
-                metrics.append(
-                    CalibrationMetricRow(
-                        fold_id=fold_id,
-                        dimension=dimension,
-                        segment=segment,
-                        training_prediction=predicted,
-                        holdout_count=len(rows),
-                        holdout_positive_count=positives,
-                        holdout_rate=hold_rate,
-                        brier_score=brier_score(actuals),
-                        baseline_brier_score=brier_score(base_pairs),
-                        brier_delta=None,
-                        calibration_error=error,
-                        coverage=None,
-                        evidence_status=status,
-                        direction_match=matched,
-                    )
-                )
+        _append_target_metrics(
+            metrics,
+            fold_id=fold_id,
+            evaluated=evaluated,
+            dimensions=dimensions,
+            feedback_config=learned,
+            signals=signals,
+            baseline=baseline,
+            rate_key="strong_positive_rate",
+            outcome_labels=strong_labels,
+            prefix="",
+            holdout_min=holdout_min,
+            holdout_segment_min=holdout_segment_min,
+            use_adjusted_rate=True,
+        )
+        _append_target_metrics(
+            metrics,
+            fold_id=fold_id,
+            evaluated=evaluated,
+            dimensions=dimensions,
+            feedback_config=learned,
+            signals=signals,
+            baseline=final_baseline,
+            rate_key="final_positive_rate",
+            outcome_labels=final_labels,
+            prefix="final_positive",
+            holdout_min=holdout_min,
+            holdout_segment_min=holdout_segment_min,
+            use_adjusted_rate=False,
+        )
         _append_buckets(metrics, fold_id, evaluated, learned, signals, baseline, block)
         _append_topk(metrics, fold_id, evaluated, strong_labels, block, learned, signals, baseline)
     ordered_metrics = tuple(
