@@ -438,7 +438,7 @@ async def test_truncated_jd_stays_conservative() -> None:
 
 
 def test_classifier_version_bump_invalidates_phase5_v1() -> None:
-    assert ROLE_CLASSIFIER_VERSION == "phase5-v3"
+    assert ROLE_CLASSIFIER_VERSION == "phase5-v4"
     assert not classification_is_current(
         role_family="OTHER",
         role_content_hash="abc",
@@ -449,6 +449,12 @@ def test_classifier_version_bump_invalidates_phase5_v1() -> None:
         role_family="OTHER",
         role_content_hash="abc",
         role_classifier_version="phase5-v2",
+        content_hash="abc",
+    )
+    assert not classification_is_current(
+        role_family="OTHER",
+        role_content_hash="abc",
+        role_classifier_version="phase5-v3",
         content_hash="abc",
     )
     assert classification_is_current(

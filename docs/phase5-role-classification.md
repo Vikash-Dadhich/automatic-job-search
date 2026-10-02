@@ -20,7 +20,7 @@ A description under 80 characters is unknown and is not sent to a model. Clear p
 
 ## Output
 
-Stored fields are `role_family`, `role_subfamily`, `role_confidence` (`high`, `medium`, or `low`), `role_evidence`, `role_classifier_version` (`phase5-v3`), and `role_content_hash`. A second family, when the role itself performs one, is stored beside those fields. See `docs/role-classification-multidimensional.md`.
+Stored fields are `role_family`, `role_subfamily`, `role_confidence` (`high`, `medium`, or `low`), `role_evidence`, `role_classifier_version` (`phase5-v4`), and `role_content_hash`. A second family, when the role itself performs one, is stored beside those fields. See `docs/role-classification-multidimensional.md`.
 
 Confidence is how sure the label is. It is not a fit score and it does not change tier, rank, or status.
 

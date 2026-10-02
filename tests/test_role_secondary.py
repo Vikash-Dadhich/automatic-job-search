@@ -169,6 +169,122 @@ async def test_one_phrase_needs_structured_confirmation() -> None:
     assert confirmed.role_secondary_confidence == "low"
 
 
+async def test_llm_prompt_includes_structured_responsibilities() -> None:
+    captured: dict[str, str] = {}
+
+    class _Capture:
+        async def complete(self, **kwargs: object) -> str:
+            captured["user"] = str(kwargs.get("user", ""))
+            return (
+                '{"primary_family":"CONSULTING","subfamily":"BUSINESS_CONSULTING",'
+                '"confidence":"low","evidence":["JD describes business consulting."]}'
+            )
+
+    vague = _jd("Help the team and attend meetings during the summer internship.")
+    structured = extract_structured_jd(
+        "Responsibilities\n- Own the product roadmap\n\n" + vague,
+        jd_status="present",
+    )
+    result = await classify_role(
+        title="Intern",
+        description=vague,
+        content_hash="llm-structured",
+        client=_Capture(),
+        structured=structured,
+    )
+    assert result.role_family == "CONSULTING"
+    assert "Own the product roadmap" in captured["user"]
+    assert "Responsibilities:" in captured["user"]
+
+
+async def test_qualification_only_mention_is_not_a_secondary_family() -> None:
+    description = _jd(
+        "Join a case team for client-facing management consulting engagements. "
+        "Preferred qualifications: experience with product management and the product roadmap."
+    )
+    base = extract_structured_jd(description, jd_status="present")
+    from scraper.structured_jd import FunctionalSignals, TextItem
+
+    qualified = base.model_copy(
+        update={
+            "functional": FunctionalSignals(
+                state="explicit",
+                areas=[
+                    TextItem(
+                        text="Experience with product management preferred",
+                        category="product_management",
+                        snippet="Experience with product management preferred",
+                    )
+                ],
+            )
+        }
+    )
+    result = await classify_role(
+        title="Management Consulting Intern",
+        description=description,
+        content_hash="qual-only",
+        structured=qualified,
+    )
+    assert result.role_family == "CONSULTING"
+    assert result.role_secondary_family is None
+
+
+async def test_collaboration_responsibility_is_not_a_secondary_family() -> None:
+    description = _jd(
+        "Join a case team for client-facing management consulting engagements.\n"
+        "Responsibilities\n"
+        "- Collaborate with product managers on the product roadmap.\n"
+        "- Work closely with marketing on the launch calendar."
+    )
+    structured = extract_structured_jd(description, jd_status="present")
+    result = await classify_role(
+        title="Management Consulting Intern",
+        description=description,
+        content_hash="collab-structured",
+        structured=structured,
+    )
+    assert result.role_family == "CONSULTING"
+    assert result.role_secondary_family is None
+
+
+async def test_responsibility_evidence_still_marks_a_hybrid() -> None:
+    description = _jd(
+        "Responsibilities\n"
+        "- Own the product roadmap and product requirements.\n"
+        "- Develop corporate strategy for the business unit."
+    )
+    structured = extract_structured_jd(description, jd_status="present")
+    result = await classify_role(
+        title="Product Owner Intern",
+        description=description,
+        content_hash="hybrid-responsibilities",
+        structured=structured,
+    )
+    assert result.role_family == "PRODUCT_MANAGEMENT"
+    assert result.role_secondary_family == "STRATEGY_TRANSFORMATION"
+
+
+async def test_interaction_evidence_from_the_model_is_rejected() -> None:
+    class _Client:
+        async def complete(self, **_kwargs: object) -> str:
+            return (
+                '{"primary_family":"CONSULTING","subfamily":"BUSINESS_CONSULTING",'
+                '"confidence":"medium","evidence":["JD describes business consulting."],'
+                '"secondary_family":"PRODUCT_MANAGEMENT","secondary_subfamily":"PM_CORE",'
+                '"secondary_confidence":"high",'
+                '"secondary_evidence":["Collaborate with product managers."]}'
+            )
+
+    result = await classify_role(
+        title="Intern",
+        description=_jd("Help the team and attend meetings during the summer internship."),
+        content_hash="llm-interaction",
+        client=_Client(),
+    )
+    assert result.role_family == "CONSULTING"
+    assert result.role_secondary_family is None
+
+
 async def test_truncated_posting_has_no_secondary_family() -> None:
     result = await classify_role(
         title="Product Owner Intern",
@@ -182,6 +298,25 @@ async def test_truncated_posting_has_no_secondary_family() -> None:
     assert result.role_family == "PRODUCT_MANAGEMENT"
     assert result.role_secondary_family is None
     assert result.role_confidence in {"high", "medium", "low"}
+    structured = extract_structured_jd(
+        "Responsibilities\n- Develop corporate strategy for the business unit.\n\n"
+        + _jd(
+            "Own the product roadmap and product requirements. "
+            "Also develop corporate strategy and business strategy for the unit."
+        ),
+        jd_status="present",
+    )
+    with_structure = await classify_role(
+        title="Product Owner Intern",
+        description=_jd(
+            "Own the product roadmap and product requirements. "
+            "Also develop corporate strategy and business strategy for the unit."
+        ),
+        content_hash="truncated-structured",
+        truncated=True,
+        structured=structured,
+    )
+    assert with_structure.role_secondary_family is None
 
 
 async def test_short_text_stays_unknown() -> None:
@@ -297,7 +432,7 @@ async def test_cache_recomputes_only_when_hash_or_version_changes(
             role_classifier_version=saved.role_classifier_version,
             content_hash=saved.content_hash,
         )
-        saved.role_classifier_version = "phase5-v2"
+        saved.role_classifier_version = "phase5-v3"
         session.add(saved)
         await _apply_role_classification(session, saved, None)
         assert calls["n"] == 2

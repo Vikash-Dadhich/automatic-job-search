@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from scorer.clients import LLMClient
 
-ROLE_CLASSIFIER_VERSION = "phase5-v3"
+ROLE_CLASSIFIER_VERSION = "phase5-v4"
 
 PRIMARY_FAMILIES = frozenset(
     {
@@ -199,7 +199,9 @@ _CLASSIFY_SYSTEM = (
     "Return only the allowed taxonomy. OTHER and UNKNOWN are allowed as the primary family. "
     "A second family is optional and only when the role itself performs that function. "
     "Do not set a secondary family to OTHER or UNKNOWN. "
-    "Collaborating with another function is not a secondary family. "
+    "A preferred qualification, or collaborating with another function, "
+    "does not establish a secondary family. "
+    "Structured responsibilities are the strongest sign of work the role performs. "
     "Confidence is how sure the role label is, not whether someone should apply. "
     'Reply with JSON {"primary_family","subfamily","confidence","evidence",'
     '"secondary_family","secondary_subfamily","secondary_confidence","secondary_evidence"}.'
@@ -312,18 +314,9 @@ def _score_blob(blob: str, weight: int, scores: dict[str, int]) -> None:
             scores[subfamily] = scores.get(subfamily, 0) + weight
 
 
-_AREA_FAMILY: dict[str, tuple[str, str]] = {
-    "product_management": ("PRODUCT_MANAGEMENT", "PM_CORE"),
-    "consulting": ("CONSULTING", "MANAGEMENT_CONSULTING"),
-    "strategy": ("STRATEGY_TRANSFORMATION", "CORPORATE_STRATEGY"),
-    "technology_strategy": ("STRATEGY_TRANSFORMATION", "TECHNOLOGY_STRATEGY"),
-    "business_transformation": ("STRATEGY_TRANSFORMATION", "BUSINESS_TRANSFORMATION"),
-    "program_operations": ("PROGRAM_PROJECT_OPERATIONS", "PROGRAM_MANAGEMENT"),
-    "product_marketing": ("PRODUCT_MARKETING", "PRODUCT_MARKETING"),
-    "marketing": ("MARKETING", "MARKETING_GENERAL"),
-}
 _INTERACTION_RE = re.compile(
-    r"\b(?:collaborat\w*|work(?:s|ing)?(?:\s+closely)?\s+with|partner(?:s|ing)?\s+with)\b",
+    r"\b(?:collaborat\w*|work(?:s|ing)?(?:\s+closely)?\s+with|partner(?:s|ing)?\s+with|"
+    r"support(?:s|ing)?\s+the)\b",
     re.IGNORECASE,
 )
 _PERFORM_RE = re.compile(
@@ -379,20 +372,80 @@ def _phrase_hits(description: str) -> dict[str, dict[str, list[str]]]:
     return found
 
 
+def _item_text(item: Any) -> str:
+    raw = str(getattr(item, "text", "") or getattr(item, "snippet", "") or "")
+    return " ".join(raw.split())
+
+
 def _structured_support(structured: Any, family: str) -> str | None:
-    """A non-interaction structured signal for this family, if one exists."""
+    """Responsibility text showing this family is work the role performs."""
     if structured is None or getattr(structured, "availability", None) == "unavailable":
         return None
-    functional = getattr(structured, "functional", None)
-    areas = getattr(functional, "areas", None) or []
-    for item in areas:
-        mapped = _AREA_FAMILY.get(getattr(item, "category", ""))
-        if mapped is None or mapped[0] != family:
+    items = getattr(getattr(structured, "responsibilities", None), "items", None) or []
+    for item in items:
+        text = _item_text(item)
+        if not text or _is_interaction(text):
             continue
-        snippet = str(getattr(item, "snippet", "") or getattr(item, "text", ""))
-        if snippet and not _is_interaction(snippet):
-            return " ".join(snippet.split())[:120]
+        for subfamily, phrases in _PHRASES.items():
+            if SUBFAMILY_FAMILY.get(subfamily) != family:
+                continue
+            if any(phrase in text.lower() for phrase in phrases):
+                return text[:120]
     return None
+
+
+def _clip_items(items: Any, limit: int = 6) -> list[str]:
+    lines: list[str] = []
+    for item in list(items or [])[:limit]:
+        text = _item_text(item)
+        if text:
+            lines.append(text[:160])
+    return lines
+
+
+def _structured_prompt(structured: Any) -> str:
+    """Compact structured evidence for the model. Not a candidate profile."""
+    if structured is None or getattr(structured, "availability", None) == "unavailable":
+        return ""
+    parts = ["Structured reading of the same description:"]
+    responsibilities = _clip_items(
+        getattr(getattr(structured, "responsibilities", None), "items", None)
+    )
+    if responsibilities:
+        parts.append("Responsibilities: " + "; ".join(responsibilities))
+    qualifications = getattr(structured, "qualifications", None)
+    required = _clip_items(getattr(qualifications, "required", None))
+    preferred = _clip_items(getattr(qualifications, "preferred", None))
+    if required:
+        parts.append("Required qualifications: " + "; ".join(required))
+    if preferred:
+        parts.append("Preferred qualifications: " + "; ".join(preferred))
+    experience = getattr(getattr(structured, "experience", None), "snippet", None)
+    if experience:
+        parts.append(f"Experience: {experience}")
+    education = getattr(getattr(structured, "education", None), "snippet", None)
+    if education:
+        parts.append(f"Education: {education}")
+    areas = _clip_items(getattr(getattr(structured, "functional", None), "areas", None))
+    if areas:
+        parts.append("Functional mentions: " + "; ".join(areas))
+    program = getattr(getattr(structured, "program", None), "snippets", None) or []
+    if program:
+        parts.append("Program: " + "; ".join(str(item) for item in list(program)[:4]))
+    work = getattr(getattr(structured, "work_model", None), "snippets", None) or []
+    if work:
+        parts.append("Work model: " + "; ".join(str(item) for item in list(work)[:3]))
+    domains = _clip_items(getattr(getattr(structured, "domain", None), "domains", None))
+    if domains:
+        parts.append("Domain: " + "; ".join(domains))
+    authorization = getattr(structured, "authorization", None)
+    if getattr(authorization, "state", None) == "explicit":
+        parts.append("Authorization language is present and is not role-family evidence.")
+    parts.append(
+        "Judge the role by work it performs. A qualification or a collaboration mention "
+        "does not by itself create a secondary family."
+    )
+    return "\n".join(parts)
 
 
 def _secondary_choice(
@@ -471,12 +524,15 @@ def _validated_secondary(label: _ModelLabel) -> tuple[str, str | None, str, list
     confidence = (label.secondary_confidence or "").strip().lower()
     if confidence not in {"high", "medium", "low"}:
         confidence = "low"
-    evidence = [
+    provided = [
         line.strip()
         for line in label.secondary_evidence
         if line and line.strip()
         and not re.search(r"\b(candidate|vikash|fit score|resume)\b", line, re.IGNORECASE)
-    ][:4]
+    ]
+    if provided and all(_is_interaction(line) for line in provided):
+        return None
+    evidence = [line for line in provided if not _is_interaction(line)][:4]
     if not evidence:
         evidence = [_EVIDENCE.get(subfamily or raw, _EVIDENCE["UNKNOWN"])]
     return raw, subfamily, confidence, evidence
@@ -629,11 +685,14 @@ async def classify_role(
             content_hash,
             "Description is missing or too short to classify the role.",
         )
+    structured_text = _structured_prompt(structured)
     user = (
         f"Title: {title}\n"
         f"Description:\n{description[:8000]}\n"
         "Discovery labels are context only and must not override the description."
     )
+    if structured_text:
+        user = f"{user}\n{structured_text}"
     try:
         raw = await client.complete(
             model=model or "role-classifier",

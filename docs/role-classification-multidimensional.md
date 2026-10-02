@@ -4,7 +4,7 @@ Role classification says what the job is. It does not score the candidate, chang
 
 ## Contract
 
-The classifier version is `phase5-v3`.
+The classifier version is `phase5-v4`.
 
 The primary family remains `role_family`, with `role_subfamily`, `role_confidence`, and `role_evidence`. Those names are unchanged.
 
@@ -23,15 +23,15 @@ Confidence is still `high`, `medium`, or `low`. A missing secondary classificati
 
 ## What the classifier reads
 
-It reads structured JD evidence when a current `phase19-v1` reading exists, then the normalized description, then the title. Discovery labels stay context and do not override the description. Company name, dream-company status, the candidate profile, and fit score are not inputs. Sponsorship, citizenship, and clearance are not role evidence.
+It reads structured JD evidence when a current `phase19-v1` reading exists, then the normalized description, then the title. The same structured reading is included when classification falls through to the model. Discovery labels stay context and do not override the description. Company name, dream-company status, the candidate profile, and fit score are not inputs. Sponsorship, citizenship, and clearance are not role evidence.
 
 ## Function versus interaction
 
-A secondary family requires the role to perform that function: more than one explicit phrase, or one phrase confirmed by structured JD evidence that is not an interaction note. "Collaborate with product managers" or "work closely with marketing" does not create that family. A truncated description does not receive a secondary family.
+A secondary family requires the role to perform that function: more than one explicit phrase, or one phrase confirmed by a structured responsibility that describes that work. A functional keyword in a qualification does not confirm it. "Collaborate with product managers", "work closely with marketing", or "support the strategy team" does not create that family. A truncated description does not receive a secondary family, including when structured responsibilities exist.
 
 ## Cache
 
-A stored label is current only when `role_content_hash` matches the normalized JD and `role_classifier_version` is `phase5-v3`. A changed description clears the primary and secondary fields. An older classifier version is recomputed. The same hash and version are not recomputed.
+A stored label is current only when `role_content_hash` matches the normalized JD and `role_classifier_version` is `phase5-v4`. `phase5-v3` is stale. A changed description clears the primary and secondary fields. An older classifier version is recomputed. The same hash and version are not recomputed.
 
 ## Non-goals
 
