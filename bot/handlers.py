@@ -232,10 +232,13 @@ async def _handle_outcome_callback(
         target.outcome_at = now
         target.updated_at = now
         message_id = target.outcome_message_id
-        session.add(target)
-        # Snapshot fields used after the session closes.
         title = target.title
         company = target.company
+        session.add(target)
+
+    from automation.tracker import record_outcome
+
+    await record_outcome(job_id, outcome, occurred_at=now, source="telegram")
 
     if message_id is not None and message_id > 0:
         edit_chat = chat_id if chat_id is not None else client.chat_id
@@ -366,6 +369,15 @@ async def handle_callback(
             if screenshot:
                 target.screenshot_path = screenshot
             session.add(target)
+
+        from automation.tracker import record_manual_review, record_submitted, record_withdrawn
+
+        if new_status == Status.submitted:
+            await record_submitted(job_id, occurred_at=now, source="telegram")
+        elif new_status == Status.manual_review:
+            await record_manual_review(job_id, occurred_at=now, source="telegram", note=detail)
+        elif new_status == Status.ignored:
+            await record_withdrawn(job_id, occurred_at=now, source="telegram")
 
         decision_label = {
             Status.submitted: "APPROVED / SUBMITTED",

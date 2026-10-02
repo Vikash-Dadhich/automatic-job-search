@@ -195,6 +195,9 @@ class ApplyRunner:
             target.last_error = None
             target.updated_at = now
             session.add(target)
+        from automation.tracker import record_prefill
+
+        await record_prefill(job.id, occurred_at=now)
 
     async def _persist_blocker(self, job: Job, exc: BlockerError) -> None:
         if job.id is None:
@@ -211,6 +214,14 @@ class ApplyRunner:
             target.alerted_at = None
             target.updated_at = now
             session.add(target)
+        from automation.tracker import record_manual_review
+
+        await record_manual_review(
+            job.id,
+            occurred_at=now,
+            source="workday",
+            note=str(exc)[:500],
+        )
 
     async def _persist_error(self, job: Job, reason: str) -> None:
         if job.id is None:

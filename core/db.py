@@ -81,6 +81,32 @@ class Outcome(StrEnum):
     offer = "offer"
 
 
+class ApplicationState(StrEnum):
+    """Where an actual application attempt stands. Not a job workflow status."""
+
+    in_progress = "in_progress"
+    submitted = "submitted"
+    manual_review = "manual_review"
+    withdrawn = "withdrawn"
+
+
+class ApplicationMethod(StrEnum):
+    workday = "workday"
+    manual = "manual"
+
+
+class ApplicationEventType(StrEnum):
+    started = "started"
+    submitted = "submitted"
+    manual_review = "manual_review"
+    withdrawn = "withdrawn"
+    ghosted = "ghosted"
+    screening = "screening"
+    interview = "interview"
+    rejected = "rejected"
+    offer = "offer"
+
+
 # Nullable columns added after the original jobs table. init_db alters old
 # SQLite files and Neon in place; create_all does not.
 _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
@@ -396,6 +422,40 @@ class PlatformPacing(SQLModel, table=True):
     updated_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
+class Application(SQLModel, table=True):
+    """One application lifecycle for a canonical job. Not created by discovery."""
+
+    __tablename__: ClassVar[str] = "applications"
+    __table_args__ = (UniqueConstraint("job_id", name="uq_application_job"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="jobs.id", unique=True, index=True)
+    state: str = Field(default=ApplicationState.in_progress.value, max_length=32, index=True)
+    method: str = Field(default=ApplicationMethod.manual.value, max_length=32)
+    started_at: datetime = _tz_datetime()
+    submitted_at: datetime | None = _tz_datetime(nullable=True)
+    last_status_at: datetime = _tz_datetime()
+    outcome: str | None = Field(default=None, max_length=32)
+    outcome_at: datetime | None = _tz_datetime(nullable=True)
+    tracker_version: str = Field(default="phase15-v1", max_length=32)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+    updated_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
+class ApplicationEvent(SQLModel, table=True):
+    """One factual application transition. Pipeline stages are not events."""
+
+    __tablename__: ClassVar[str] = "application_events"
+
+    id: int | None = Field(default=None, primary_key=True)
+    application_id: int = Field(foreign_key="applications.id", index=True)
+    event_type: str = Field(max_length=32, index=True)
+    occurred_at: datetime = _tz_datetime()
+    source: str | None = Field(default=None, max_length=32)
+    note: str | None = Field(default=None, max_length=500)
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
 class RoleBaseline(SQLModel, table=True):
     """Per-role baseline resume built from aggregating ~15-20 JDs."""
 
@@ -621,6 +681,12 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await _ensure_job_columns(conn)
+        names = await _job_column_names(conn)
+    # A legacy stub table may still lack the original identity columns.
+    if "status" in names and "source" in names:
+        from automation.tracker import backfill_submitted_applications
+
+        await backfill_submitted_applications()
 
 
 def _dialect_name(conn: Any) -> str:
@@ -1225,6 +1291,37 @@ async def get_unsent_suggestion_jobs(
         if job is not None:
             jobs.append(job)
     return jobs
+
+
+async def get_application_for_job(
+    session: AsyncSession,
+    job_id: int,
+) -> Application | None:
+    statement = select(Application).where(col(Application.job_id) == job_id)
+    result = await session.exec(statement)
+    return result.first()
+
+
+async def get_application_by_id(
+    session: AsyncSession,
+    application_id: int,
+) -> Application | None:
+    statement = select(Application).where(col(Application.id) == application_id)
+    result = await session.exec(statement)
+    return result.first()
+
+
+async def get_application_events(
+    session: AsyncSession,
+    application_id: int,
+) -> list[ApplicationEvent]:
+    statement = (
+        select(ApplicationEvent)
+        .where(col(ApplicationEvent.application_id) == application_id)
+        .order_by(col(ApplicationEvent.occurred_at), col(ApplicationEvent.id))
+    )
+    result = await session.exec(statement)
+    return list(result.all())
 
 
 def job_to_dict(job: Job) -> dict[str, Any]:
