@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,7 +19,14 @@ from scraper.textclean import html_to_text
 
 log = structlog.get_logger(__name__)
 
-INTELLIGENCE_VERSION = "phase8-v1"
+INTELLIGENCE_VERSION = "phase8-v2"
+_SOURCE_RANK = {
+    "official_website": 1,
+    "careers": 2,
+    "regulatory": 3,
+    "sec": 4,
+    "other": 5,
+}
 _SOURCE_TYPES = frozenset({"official_website", "careers", "sec", "regulatory", "other"})
 _LEGAL_SUFFIXES = frozenset(
     {
@@ -81,6 +89,61 @@ _EMPLOYEES_RE = re.compile(
 _FOUNDED_RE = re.compile(r"\bfounded in (\d{4})\b", re.IGNORECASE)
 _PARENT_RE = re.compile(r"\bsubsidiary of ([^.]+)", re.IGNORECASE)
 _SELF_RE = re.compile(r"\bdescribes itself as ([^.]+)", re.IGNORECASE)
+_DOMAIN_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("financial_services", r"\bfinancial services\b"),
+    ("banking", r"\bbanking\b"),
+    ("payments", r"\bpayments\b"),
+    ("fintech", r"\bfintech\b"),
+    ("healthcare", r"\bhealthcare\b"),
+    ("software", r"\bsoftware\b"),
+    ("cloud", r"\bcloud\b"),
+    ("artificial_intelligence", r"\bartificial intelligence\b|\bmachine learning\b"),
+    ("enterprise_software", r"\benterprise software\b"),
+    ("consumer_technology", r"\bconsumer technology\b"),
+    ("ecommerce", r"\be-commerce\b|\becommerce\b"),
+    ("consulting", r"\bconsulting\b"),
+    ("professional_services", r"\bprofessional services\b"),
+    ("manufacturing", r"\bmanufacturing\b"),
+    ("energy", r"\benergy\b"),
+    ("automotive", r"\bautomotive\b"),
+    ("telecommunications", r"\btelecommunications\b"),
+    ("media", r"\bmedia\b"),
+    ("retail", r"\bretail\b"),
+    ("logistics", r"\blogistics\b"),
+    ("travel", r"\btravel\b"),
+    ("insurance", r"\binsurance\b"),
+)
+_PROGRAM_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("mba_internship_program", r"\bmba internship(?: program)?\b"),
+    ("summer_internship_program", r"\bsummer internship(?: program)?\b"),
+    ("graduate_internship_program", r"\bgraduate internship(?: program)?\b"),
+    ("mba_recruiting", r"\bmba recruiting\b"),
+    ("business_school_recruiting", r"\bbusiness school recruiting\b"),
+    ("leadership_development_program", r"\bleadership development program\b"),
+    ("internship_program", r"\binternship program\b"),
+    ("full_time_mba_recruiting", r"\bfull-time mba recruiting\b"),
+)
+_US_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("us_headquarters", r"\bu\.?s\.? headquarters\b|\bheadquartered in the united states\b"),
+    ("us_office", r"\bu\.?s\.? office\b|\bunited states office\b"),
+    ("us_internship_program", r"\bu\.?s\.? internship\b|\bunited states internship\b"),
+    ("us_careers", r"\bu\.?s\.? careers\b|\bunited states careers\b"),
+    ("us_recruiting", r"\bu\.?s\.? recruiting\b|\bunited states recruiting\b"),
+)
+_US_OPERATIONS = re.compile(r"\bu\.?s\.? operations\b|\bunited states operations\b", re.IGNORECASE)
+_US_OPERATIONS_NEG = re.compile(
+    r"\b(?:no|without)\s+(?:u\.?s\.?|united states)\s+operations\b"
+    r"|\bdoes not (?:have|operate)\b[^.]{0,40}\b(?:u\.?s\.?|united states)\s+operations\b",
+    re.IGNORECASE,
+)
+_REVENUE_RE = re.compile(
+    r"\b(?:annual revenue|revenue of)\s+\$?\d[\d,.]*\s*(?:billion|million)?\b",
+    re.IGNORECASE,
+)
+_EXCHANGE_RE = re.compile(r"\blisted on the (NYSE|NASDAQ)\b", re.IGNORECASE)
+_COUNTRIES_RE = re.compile(r"\boperates in (\d+) countries\b", re.IGNORECASE)
+_OFFICES_RE = re.compile(r"\b(\d+) offices\b", re.IGNORECASE)
+_LINES_RE = re.compile(r"\bbusiness lines include ([^.]+)", re.IGNORECASE)
 
 
 def normalize_company_name(name: str | None) -> str:
@@ -134,6 +197,123 @@ def extract_company_facts(text: str) -> dict[str, Any]:
     if described:
         facts["business_description"] = described.group(1).strip()
     return facts
+
+
+def extract_company_signals(text: str) -> list[dict[str, Any]]:
+    """Explicit employer signals. A missing phrase stays absent, not false."""
+    signals: list[dict[str, Any]] = []
+    for name, pattern in _DOMAIN_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            signals.append(_signal(f"domain:{name}", name, text, match))
+    for name, pattern in _PROGRAM_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            signals.append(_signal(name, True, text, match))
+    for name, pattern in _US_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            signals.append(_signal(name, True, text, match))
+    if _US_OPERATIONS_NEG.search(text):
+        match = _US_OPERATIONS_NEG.search(text)
+        assert match is not None
+        signals.append(_signal("us_operations", False, text, match))
+    elif (match := _US_OPERATIONS.search(text)):
+        signals.append(_signal("us_operations", True, text, match))
+    if (match := _PUBLIC_RE.search(text)):
+        signals.append(_signal("public_private", "public", text, match))
+    elif (match := _PRIVATE_RE.search(text)):
+        signals.append(_signal("public_private", "private", text, match))
+    if (match := _REVENUE_RE.search(text)):
+        signals.append(_signal("revenue", _compact(match.group(0)), text, match))
+    if (match := _EXCHANGE_RE.search(text)):
+        signals.append(_signal("exchange", match.group(1).upper(), text, match))
+    if (match := _COUNTRIES_RE.search(text)):
+        signals.append(_signal("country_count", int(match.group(1)), text, match))
+    if (match := _OFFICES_RE.search(text)):
+        signals.append(_signal("office_count", int(match.group(1)), text, match))
+    if (match := _EMPLOYEES_RE.search(text)):
+        signals.append(_signal("employee_count", _compact(match.group(0)), text, match))
+    if (match := _LINES_RE.search(text)):
+        signals.append(_signal("business_lines", match.group(1).strip(" ,"), text, match))
+    return signals
+
+
+def merge_company_signals(
+    existing: list[dict[str, Any]] | None,
+    incoming: list[dict[str, Any]],
+    *,
+    source_url: str,
+) -> list[dict[str, Any]]:
+    """Replace this source's signals, then keep the higher-priority source on a conflict."""
+    kept = [item for item in existing or [] if item.get("source_url") != source_url]
+    best: dict[str, dict[str, Any]] = {}
+    for item in [*kept, *incoming]:
+        key = str(item.get("signal") or "")
+        if not key:
+            continue
+        current = best.get(key)
+        if current is None or _prefer_signal(item, current):
+            best[key] = item
+    return [best[key] for key in sorted(best)]
+
+
+def empty_company_context() -> dict[str, Any]:
+    return {"version": INTELLIGENCE_VERSION, "signals": []}
+
+
+def _signal(name: str, value: Any, text: str, match: re.Match[str]) -> dict[str, Any]:
+    return {
+        "signal": name,
+        "value": value,
+        "snippet": _snippet(text, match),
+        "basis": "explicit",
+    }
+
+
+def _snippet(text: str, match: re.Match[str]) -> str:
+    start = max(0, match.start() - 30)
+    end = min(len(text), match.end() + 30)
+    return _compact(text[start:end])[:180]
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _prefer_signal(candidate: dict[str, Any], current: dict[str, Any]) -> bool:
+    rank_candidate = _SOURCE_RANK.get(str(candidate.get("source_type")), 9)
+    rank_current = _SOURCE_RANK.get(str(current.get("source_type")), 9)
+    if rank_candidate != rank_current:
+        return rank_candidate < rank_current
+    return str(candidate.get("observed_at") or "") >= str(current.get("observed_at") or "")
+
+
+def _stamp_signals(
+    signals: list[dict[str, Any]],
+    *,
+    source_type: str,
+    source_url: str,
+    observed_at: datetime,
+) -> list[dict[str, Any]]:
+    stamped: list[dict[str, Any]] = []
+    for item in signals:
+        stamped.append(
+            {
+                **item,
+                "source_type": source_type,
+                "source_url": source_url,
+                "observed_at": observed_at.astimezone(UTC).isoformat(),
+            }
+        )
+    return stamped
+
+
+def _context_from(signals: list[dict[str, Any]]) -> dict[str, Any]:
+    payload = {"version": INTELLIGENCE_VERSION, "signals": signals}
+    raw = repr(signals).encode()
+    payload["content_hash"] = hashlib.sha256(raw).hexdigest()
+    return payload
 
 
 _JOB_BOARD_HOSTS = (
@@ -317,6 +497,27 @@ def merge_company_facts(existing: dict[str, Any], new: dict[str, Any]) -> dict[s
     return merged
 
 
+def _apply_context(row: CompanyIntelligence, document: CompanySourceDocument) -> None:
+    """Refresh signals from this page. A bad extract leaves the previous context."""
+    try:
+        extracted = extract_company_signals(document.text)
+    except Exception as exc:
+        log.warning("company_context_extract_failed", error=type(exc).__name__)
+        return
+    prior: list[dict[str, Any]] = []
+    if isinstance(row.context, dict) and isinstance(row.context.get("signals"), list):
+        prior = [item for item in row.context["signals"] if isinstance(item, dict)]
+    stamped = _stamp_signals(
+        extracted,
+        source_type=_source_type(document.source_type),
+        source_url=document.url,
+        observed_at=document.retrieved_at,
+    )
+    row.context = _context_from(
+        merge_company_signals(prior, stamped, source_url=document.url)
+    )
+
+
 def _apply_facts(row: CompanyIntelligence, facts: dict[str, Any]) -> None:
     row.industry = facts["industry"]
     row.public_private = facts["public_private"]
@@ -382,6 +583,7 @@ async def resolve_company(
             row.status = "unresolved"
             row.confidence = "low"
             row.intelligence_version = INTELLIGENCE_VERSION
+            row.context = empty_company_context()
             session.add(row)
             await session.flush()
         if row.status == "unresolved":
@@ -422,6 +624,7 @@ async def resolve_company(
     prior = {name: getattr(row, name) for name in _FACT_FIELDS}
     facts = merge_company_facts(prior, facts)
     _apply_facts(row, facts)
+    _apply_context(row, document)
     stored_type = _source_type(document.source_type or kind)
     row.sources = _accumulate_sources(
         list(row.sources or []),
@@ -522,6 +725,7 @@ async def _store_failure(
         _clear_facts(row)
         row.sources = []
         row.website = None
+        row.context = empty_company_context()
     row.status = "failed"
     row.confidence = "low"
     row.intelligence_version = INTELLIGENCE_VERSION

@@ -12,7 +12,7 @@ The record is factual. It can say that a source calls the company public, names 
 
 `company_intelligence` is its own table. Jobs keep the discovered `company` string. `Job.company_intelligence_id` points at the shared row. Two jobs can share one row. They stay separate jobs, with their own source and external id.
 
-Stored fields are the lookup key, the raw and canonical names, website, industry, company type, public or private, headquarters, employee range, founded year, parent company, a short self-description, sources, confidence, status, `phase8-v1`, and timestamps. A field stays null when the source does not state it.
+Stored fields are the lookup key, the raw and canonical names, website, industry, company type, public or private, headquarters, employee range, founded year, parent company, a short self-description, sources, confidence, status, `phase8-v2`, a `context` document of explicit signals, and timestamps. A field stays null when the source does not state it. The signal document is described in `docs/company-intelligence-v2.md`. It is not a company score, and it does not change fit, priority, or Phase 9 eligibility.
 
 Status is `complete`, `partial`, `unresolved`, or `failed`. Confidence is `high`, `medium`, or `low`. Those words describe the evidence, not whether the company is attractive. `failed` and `unresolved` do not mean the company is a bad place to apply.
 

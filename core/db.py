@@ -274,7 +274,9 @@ class CompanyIntelligence(SQLModel, table=True):
     )
     confidence: str | None = Field(default=None, max_length=16)
     status: str = Field(default="unresolved", max_length=16, index=True)
-    intelligence_version: str = Field(default="phase8-v1", max_length=32)
+    intelligence_version: str = Field(default="phase8-v2", max_length=32)
+    # Explicit employer signals. Not a score. Null means this row predates phase8-v2.
+    context: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     retrieved_at: datetime | None = _tz_datetime(nullable=True)
     created_at: datetime = _tz_datetime(default_factory=_utcnow)
     updated_at: datetime = _tz_datetime(default_factory=_utcnow)
@@ -816,6 +818,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await _ensure_job_columns(conn)
+        await _ensure_company_columns(conn)
         names = await _job_column_names(conn)
     # A legacy stub table may still lack the original identity columns.
     if "status" in names and "source" in names:
@@ -846,6 +849,33 @@ async def _job_column_names(conn: Any) -> set[str]:
             text(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'jobs' AND table_schema = current_schema()"
+            )
+        )
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+async def _ensure_company_columns(conn: Any) -> None:
+    """Add the phase8-v2 context column. No-op when the table or column is already there."""
+    existing = await _table_column_names(conn, "company_intelligence")
+    if not existing or "context" in existing:
+        return
+    await conn.execute(text("ALTER TABLE company_intelligence ADD COLUMN context JSON"))
+
+
+async def _table_column_names(conn: Any, table: str) -> set[str]:
+    dialect = _dialect_name(conn)
+    if dialect == "sqlite":
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+        return {str(row[1]) for row in rows}
+    if table != "company_intelligence":
+        return set()
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'company_intelligence' "
+                "AND table_schema = current_schema()"
             )
         )
     ).fetchall()
