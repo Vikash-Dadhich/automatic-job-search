@@ -49,7 +49,11 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         order.append("prep")
         return _FakeSummary("prep")
 
-    async def fake_apply() -> _FakeSummary:
+    async def fake_portfolio(*_args: object, **_kwargs: object) -> dict[str, list[int]]:
+        order.append("portfolio")
+        return {"allocated_ids": []}
+
+    async def fake_apply(*_args: object, **_kwargs: object) -> _FakeSummary:
         order.append("apply")
         return _FakeSummary("apply")
 
@@ -77,6 +81,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(pipeline_mod, "_send_pending_suggestions", fake_suggest_send)
     monkeypatch.setattr(pipeline_mod, "_benchmark_tier_one_stage", fake_benchmark)
     monkeypatch.setattr(pipeline_mod, "_send_prep_pack", fake_prep)
+    monkeypatch.setattr(pipeline_mod, "_portfolio_stage", fake_portfolio)
     monkeypatch.setattr(pipeline_mod, "_apply_pending", fake_apply)
     monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", fake_reviews)
     monkeypatch.setattr(pipeline_mod, "_send_outcome_prompts", fake_outcomes)
@@ -98,6 +103,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         "suggest_send",
         "benchmark",
         "prep",
+        "portfolio",
         "apply",
         "reviews",
         "outcome_prompts",
@@ -112,6 +118,7 @@ async def test_pipeline_order_and_aggregation(monkeypatch: pytest.MonkeyPatch) -
         "suggest_send",
         "benchmark",
         "prep",
+        "portfolio",
         "apply",
         "reviews",
         "outcome_prompts",
@@ -157,11 +164,13 @@ async def test_pipeline_skips_apply_and_reviews(monkeypatch: pytest.MonkeyPatch)
         "suggest_send",
         "benchmark",
         "prep",
+        "portfolio",
         "apply",
         "reviews",
         "outcome_prompts",
         "alerts",
     ]
+    assert "portfolio" not in summary.stages
     assert "apply" not in summary.stages
     assert "prep" not in summary.stages
     assert "reviews" not in summary.stages
@@ -196,7 +205,8 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         pipeline_mod, "_send_prep_pack", lambda *_a, **_k: ok("prep")
     )
-    monkeypatch.setattr(pipeline_mod, "_apply_pending", lambda: ok("apply"))
+    monkeypatch.setattr(pipeline_mod, "_portfolio_stage", lambda *_a, **_k: ok("portfolio"))
+    monkeypatch.setattr(pipeline_mod, "_apply_pending", lambda *_a, **_k: ok("apply"))
     monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", lambda: ok("reviews"))
     monkeypatch.setattr(
         pipeline_mod, "_send_outcome_prompts", lambda: ok("outcome_prompts")
@@ -219,6 +229,7 @@ async def test_pipeline_stage_isolation(monkeypatch: pytest.MonkeyPatch) -> None
         "suggest_send",
         "benchmark",
         "prep",
+        "portfolio",
         "apply",
         "reviews",
         "outcome_prompts",

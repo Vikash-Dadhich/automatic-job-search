@@ -101,6 +101,7 @@ class ApplyRunner:
         sleep: Callable[[float], Awaitable[None]] | None = None,
         rng: random.Random | None = None,
         now: datetime | None = None,
+        job_ids: list[int] | None = None,
     ) -> ApplySummary:
         await init_db()
         settings = get_settings()
@@ -109,11 +110,18 @@ class ApplyRunner:
         summary = ApplySummary()
 
         async with session_scope() as session:
-            jobs = await get_jobs_by_status(
-                session,
-                Status.staged,
-                limit=effective_limit,
-            )
+            if job_ids is None:
+                jobs = await get_jobs_by_status(
+                    session,
+                    Status.staged,
+                    limit=effective_limit,
+                )
+            else:
+                jobs = []
+                for job_id in job_ids:
+                    job = await get_job_by_id(session, job_id)
+                    if job is not None and job.status == Status.staged:
+                        jobs.append(job)
 
         if not jobs:
             log.info("apply_pending_empty")
@@ -234,12 +242,18 @@ async def apply_pending(
     sleep: Callable[[float], Awaitable[None]] | None = None,
     rng: random.Random | None = None,
     now: datetime | None = None,
+    job_ids: list[int] | None = None,
 ) -> ApplySummary:
-    """Module-level entry point used by README / Step 7."""
+    """Module-level entry point used by README / Step 7.
+
+    ``job_ids`` limits the run to those staged rows, in that order.
+    ``None`` keeps the previous staged query.
+    """
     return await ApplyRunner(applicator=applicator, profile=profile).apply_pending(
         limit=limit,
         applicator=applicator,
         sleep=sleep,
         rng=rng,
         now=now,
+        job_ids=job_ids,
     )

@@ -72,6 +72,10 @@ async def test_ensure_job_columns_on_legacy_table(tmp_db: Path) -> None:
         "shortlist_rank",
         "shortlist_reason",
         "shortlist_config_hash",
+        "portfolio_version",
+        "portfolio_decision",
+        "portfolio_reason",
+        "portfolio_config_hash",
     } <= names
 
     await init_db()

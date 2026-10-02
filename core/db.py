@@ -127,6 +127,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "shortlist_rank": "INTEGER",
         "shortlist_reason": "VARCHAR(64)",
         "shortlist_config_hash": "VARCHAR(64)",
+        "portfolio_version": "VARCHAR(32)",
+        "portfolio_decision": "VARCHAR(32)",
+        "portfolio_reason": "VARCHAR(64)",
+        "portfolio_config_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -179,6 +183,10 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "shortlist_rank": "INTEGER",
         "shortlist_reason": "VARCHAR(64)",
         "shortlist_config_hash": "VARCHAR(64)",
+        "portfolio_version": "VARCHAR(32)",
+        "portfolio_decision": "VARCHAR(32)",
+        "portfolio_reason": "VARCHAR(64)",
+        "portfolio_config_hash": "VARCHAR(64)",
         "fit_confidence": "VARCHAR(16)",
         "fit_strengths": "JSON",
         "fit_gaps": "JSON",
@@ -273,6 +281,11 @@ class Job(SQLModel, table=True):
     shortlist_rank: int | None = Field(default=None, ge=1)
     shortlist_reason: str | None = Field(default=None, max_length=64)
     shortlist_config_hash: str | None = Field(default=None, max_length=64)
+    # Last application-capacity decision. Not a score and not a workflow status.
+    portfolio_version: str | None = Field(default=None, max_length=32)
+    portfolio_decision: str | None = Field(default=None, max_length=32)
+    portfolio_reason: str | None = Field(default=None, max_length=64)
+    portfolio_config_hash: str | None = Field(default=None, max_length=64)
     description_clean: str | None = Field(default=None)
     posted_at: datetime | None = _tz_datetime(nullable=True)
     discovered_at: datetime = _tz_datetime(default_factory=_utcnow)

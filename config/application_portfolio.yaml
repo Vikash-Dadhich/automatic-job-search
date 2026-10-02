@@ -1,0 +1,12 @@
+# How many staged application candidates may consume a run's apply capacity.
+# This is not a fit score, a priority score, or a filter.
+# Daily capacity is Settings.apply_limit (default 10).
+# The company window is Settings.company_cooldown_days (default 30).
+# Role mix is the Phase 7 weights: Product Management 40, Consulting 40,
+# Strategy/Transformation 15, and every other family shares the OTHER weight of 5.
+
+version: phase14-v1
+
+portfolio:
+  enabled: true
+  max_applications_per_company: 2

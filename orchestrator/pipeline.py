@@ -43,6 +43,27 @@ async def _shortlist_stage() -> dict[str, Any]:
     }
 
 
+async def _portfolio_stage() -> dict[str, Any]:
+    """Allocate apply capacity among staged candidates. Does not change status."""
+    from scorer.application_portfolio import apply_portfolio
+
+    result = await apply_portfolio()
+    return {
+        "allocated": result.allocated,
+        "deferred": result.deferred,
+        "allocated_ids": list(result.allocated_ids),
+    }
+
+
+def _allocated_ids(summary: PipelineSummary) -> list[int]:
+    """Staged ids the portfolio layer just allocated. Empty when that stage did not run."""
+    payload = summary.stages.get("portfolio")
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("allocated_ids") or []
+    return [item for item in raw if isinstance(item, int)]
+
+
 def _selected_ids(summary: PipelineSummary) -> list[int]:
     """Job ids the shortlist just moved into review. Empty when that stage did not run."""
     payload = summary.stages.get("shortlist")
@@ -193,6 +214,9 @@ async def run_pipeline(
     async def _benchmark_stage() -> dict[str, int]:
         return await _benchmark_tier_one_stage(_selected_ids(summary))
 
+    async def _apply_allocated() -> Any:
+        return await _apply_pending(job_ids=_allocated_ids(summary))
+
     baseline = effective_baseline(settings)
     baseline_path = None
     if os.environ.get("PYTEST_CURRENT_TEST") is None:
@@ -250,9 +274,12 @@ async def run_pipeline(
         log.info("pipeline_stage_skipped", stage="prep")
 
     if do_apply:
-        await _run_stage(summary, "apply", _apply_pending)
+        await _run_stage(summary, "portfolio", _portfolio_stage)
+        await _run_stage(summary, "apply", _apply_allocated)
     else:
+        summary.skipped.append("portfolio")
         summary.skipped.append("apply")
+        log.info("pipeline_stage_skipped", stage="portfolio")
         log.info("pipeline_stage_skipped", stage="apply")
 
     if do_reviews:
