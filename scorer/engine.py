@@ -237,6 +237,18 @@ async def _priority_evidence(session: Any, job: Job) -> tuple[Any, Any]:
     return structured, company
 
 
+async def _record_career_intelligence(job_id: int | None, profile: Profile) -> None:
+    """Advisory reading. A failure here does not change fit, priority, or status."""
+    if job_id is None:
+        return
+    try:
+        from scorer.career_intelligence import attach_career_intelligence
+
+        await attach_career_intelligence(job_id, profile)
+    except Exception as exc:
+        log.warning("career_intelligence_failed", job_id=job_id, error=str(exc)[:200])
+
+
 def _hard_blocked(job: Job, profile: Profile, cooldown: set[str]) -> bool:
     """Hard negative or company cooldown. Those jobs are not embedded."""
     if not evaluate_job(job, profile).passed:
@@ -847,42 +859,49 @@ class Scorer:
                         company_context=company,
                     )
                     session.add(target)
-                    return _JobOutcome(kind="unavailable", job_id=job.id)
+                    outcome = _JobOutcome(kind="unavailable", job_id=job.id)
+                else:
+                    target.score = evaluation.score
+                    target.tier = evaluation.tier
+                    target.justification = evaluation.reasons or [
+                        f"score={evaluation.score}"
+                    ]
+                    target.outreach_draft = evaluation.outreach
+                    target.cover_letter = evaluation.cover_letter
+                    target.scored_at = now
+                    target.status = new_status
+                    target.fit_confidence = evaluation.fit_confidence
+                    target.fit_strengths = evaluation.fit_strengths or None
+                    target.fit_gaps = evaluation.fit_gaps or None
+                    target.fit_evidence = evaluation.fit_evidence or None
+                    target.fit_dimensions = evaluation.fit_dimensions or None
+                    target.fit_version = FIT_VERSION
+                    target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
+                    target.fit_profile_hash = evaluation.fit_profile_hash
+                    target.updated_at = now
+                    structured, company = await _priority_evidence(session, target)
+                    _attach_priority(
+                        target,
+                        profile,
+                        structured=structured,
+                        company_context=company,
+                    )
+                    session.add(target)
+                    if new_status == Status.staged:
+                        outcome = _JobOutcome(
+                            kind="staged",
+                            job_id=job.id,
+                            tier=evaluation.tier.value,
+                        )
+                    else:
+                        outcome = _JobOutcome(
+                            kind="filtered_out",
+                            job_id=job.id,
+                            tier=evaluation.tier.value,
+                        )
 
-                target.score = evaluation.score
-                target.tier = evaluation.tier
-                target.justification = evaluation.reasons or [
-                    f"score={evaluation.score}"
-                ]
-                target.outreach_draft = evaluation.outreach
-                target.cover_letter = evaluation.cover_letter
-                target.scored_at = now
-                target.status = new_status
-                target.fit_confidence = evaluation.fit_confidence
-                target.fit_strengths = evaluation.fit_strengths or None
-                target.fit_gaps = evaluation.fit_gaps or None
-                target.fit_evidence = evaluation.fit_evidence or None
-                target.fit_dimensions = evaluation.fit_dimensions or None
-                target.fit_version = FIT_VERSION
-                target.fit_content_hash = evaluation.fit_content_hash or target.content_hash
-                target.fit_profile_hash = evaluation.fit_profile_hash
-                target.updated_at = now
-                structured, company = await _priority_evidence(session, target)
-                _attach_priority(
-                    target,
-                    profile,
-                    structured=structured,
-                    company_context=company,
-                )
-                session.add(target)
-
-            if new_status == Status.staged:
-                return _JobOutcome(kind="staged", job_id=job.id, tier=evaluation.tier.value)
-            return _JobOutcome(
-                kind="filtered_out",
-                job_id=job.id,
-                tier=evaluation.tier.value,
-            )
+            await _record_career_intelligence(job.id, profile)
+            return outcome
         except Exception as exc:
             log.warning("score_job_failed", job_id=job.id, error=str(exc))
             try:

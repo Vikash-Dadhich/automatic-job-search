@@ -451,6 +451,32 @@ class StructuredJobDescription(SQLModel, table=True):
     updated_at: datetime = _tz_datetime(default_factory=_utcnow)
 
 
+class CareerIntelligence(SQLModel, table=True):
+    """One current career-opportunity reading for a job. Not a fit score."""
+
+    __tablename__: ClassVar[str] = "career_intelligence"
+    __table_args__ = (UniqueConstraint("job_id", name="uq_career_intelligence_job"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    job_id: int = Field(foreign_key="jobs.id", unique=True, index=True)
+    version: str = Field(max_length=32, index=True)
+    content_hash: str = Field(max_length=64, index=True)
+    availability: str = Field(max_length=16)
+    career_transition_score: int | None = Field(default=None)
+    career_story_score: int | None = Field(default=None)
+    internship_quality_score: int | None = Field(default=None)
+    learning_value_score: int | None = Field(default=None)
+    conversion_signal: str | None = Field(default=None, max_length=16)
+    mba_recruiting_signal: str | None = Field(default=None, max_length=16)
+    opportunity_quality_score: int | None = Field(default=None)
+    application_effort_score: int | None = Field(default=None)
+    competitiveness_score: int | None = Field(default=None)
+    overall_score: int | None = Field(default=None)
+    evidence: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    created_at: datetime = _tz_datetime(default_factory=_utcnow)
+    updated_at: datetime = _tz_datetime(default_factory=_utcnow)
+
+
 class PlatformPacing(SQLModel, table=True):
     """Gap between apply sessions for one platform. The runner uses ``workday``."""
 

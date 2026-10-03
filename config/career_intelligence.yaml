@@ -1,0 +1,24 @@
+# Career-opportunity reading. Not a fit score and not a priority score.
+# Unknown dimensions are left out of the overall score. They are not zeros.
+# Application effort is stored and is not mixed into the overall score.
+
+version: career-intelligence-v1
+
+state_scores:
+  STRONG: 100
+  MODERATE: 60
+  WEAK: 20
+
+signal_scores:
+  CONFIRMED: 100
+
+weights:
+  career_transition: 1
+  career_story: 1
+  internship_quality: 1
+  learning_value: 1
+  conversion_signal: 1
+  mba_recruiting: 1
+  opportunity_quality: 1
+  application_effort: 0
+  competitiveness: 1
