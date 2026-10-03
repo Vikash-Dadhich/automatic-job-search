@@ -1,4 +1,8 @@
-"""Choose which staged jobs enter review. This does not score or discard a job."""
+"""Choose which staged jobs enter review. This does not score or discard a job.
+
+Pipeline selection lives here. ``bot.prep.select_shortlist`` is a separate
+Telegram prep list and does not define this queue.
+"""
 
 from __future__ import annotations
 
@@ -15,13 +19,21 @@ import yaml
 from core.db import Job, Status, get_job_by_id, get_jobs_by_status, init_db, session_scope
 from core.textmatch import company_tokens
 from scorer.priority import sort_by_priority
-from scorer.role_weights import get_role_family_weight
 
-SHORTLIST_VERSION = "phase13-v1"
+SHORTLIST_VERSION = "phase13-v2"
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "shortlist.yaml"
 SELECTED_BY_PRIORITY = "selected_by_priority"
-SELECTED_FOR_PORTFOLIO_DIVERSITY = "selected_for_portfolio_diversity"
+SELECTED_FOR_ROLE_DIVERSITY = "selected_for_role_diversity"
 _KEYS = ("max_size", "max_per_company", "diversity_margin")
+_DEFAULT_TARGETS = (
+    "PRODUCT_MANAGEMENT",
+    "CONSULTING",
+    "STRATEGY_TRANSFORMATION",
+    "PRODUCT_MARKETING",
+    "MARKETING",
+    "PROGRAM_PROJECT_OPERATIONS",
+)
+_NOT_TARGETS = frozenset({"UNKNOWN", "OTHER"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +51,7 @@ class ShortlistSummary:
     version: str
     config_hash: str
     selected_ids: tuple[int, ...] = ()
+    unranked: int = 0
 
 
 def _require_int(name: str, value: object, *, lower: int, upper: int) -> int:
@@ -72,7 +85,24 @@ def _validate(raw: object) -> dict[str, Any]:
             upper=100,
         ),
     }
-    return {"version": SHORTLIST_VERSION, "shortlist": parsed}
+    diversity = raw.get("role_diversity")
+    if not isinstance(diversity, dict) or set(diversity) != {"enabled", "target_families"}:
+        raise ValueError("role_diversity must set enabled and target_families")
+    if not isinstance(diversity["enabled"], bool):
+        raise ValueError("role_diversity.enabled must be true or false")
+    names = diversity["target_families"]
+    if not isinstance(names, list) or not names or not all(isinstance(item, str) for item in names):
+        raise ValueError("role_diversity.target_families must be a non-empty list of names")
+    if any(item in _NOT_TARGETS for item in names):
+        raise ValueError("UNKNOWN and OTHER are not shortlist diversity targets")
+    return {
+        "version": SHORTLIST_VERSION,
+        "shortlist": parsed,
+        "role_diversity": {
+            "enabled": diversity["enabled"],
+            "target_families": list(names),
+        },
+    }
 
 
 @lru_cache
@@ -115,9 +145,21 @@ def _company_ok(jobs: list[Job], cap: int) -> bool:
     return True
 
 
-def _targeted(job: Job) -> bool:
-    """Families above the UNKNOWN portfolio weight may fill a diversity seat."""
-    return get_role_family_weight(job.role_family) > get_role_family_weight("UNKNOWN")
+def _targets(settings: dict[str, Any]) -> frozenset[str]:
+    block = settings.get("role_diversity")
+    if not isinstance(block, dict):
+        return frozenset(_DEFAULT_TARGETS)
+    if block.get("enabled") is False:
+        return frozenset()
+    names = block.get("target_families")
+    if not isinstance(names, list):
+        return frozenset(_DEFAULT_TARGETS)
+    return frozenset(str(name) for name in names if str(name) not in _NOT_TARGETS)
+
+
+def _targeted(job: Job, targets: frozenset[str]) -> bool:
+    """Primary family only. A secondary family does not count as its own seat."""
+    return _family(job) in targets
 
 
 def _close_enough(candidate: Job, displaced: Job, margin: int) -> bool:
@@ -135,6 +177,7 @@ def _diversify(
     *,
     cap: int,
     margin: int,
+    targets: frozenset[str],
 ) -> list[Job]:
     """Replace a tail seat when one family holds more than half and a close alternative exists."""
     chosen = list(selected)
@@ -153,7 +196,7 @@ def _diversify(
         replacement: Job | None = None
         waiting = [job for job in pool if _identity(job) not in chosen_ids]
         for candidate in sort_by_priority(waiting):
-            if _family(candidate) == dominant or not _targeted(candidate):
+            if _family(candidate) == dominant or not _targeted(candidate, targets):
                 continue
             if (
                 displaced.priority_score is not None
@@ -173,7 +216,7 @@ def _diversify(
         if replacement is None:
             break
         reasons.pop(_identity(displaced), None)
-        reasons[_identity(replacement)] = SELECTED_FOR_PORTFOLIO_DIVERSITY
+        reasons[_identity(replacement)] = SELECTED_FOR_ROLE_DIVERSITY
         chosen = sort_by_priority([job for job in chosen if job is not displaced] + [replacement])
     return chosen
 
@@ -184,13 +227,17 @@ def select_shortlist(
     config: dict[str, Any] | None = None,
     occupied: int = 0,
 ) -> list[ShortlistPick]:
-    """Pick staged jobs in Phase 12 order. Does not write status or priority."""
+    """Pick staged jobs that already have a priority score. Does not write or rescore."""
     settings = config if config is not None else load_shortlist_config()
     block = settings["shortlist"]
     open_slots = max(0, int(block["max_size"]) - max(0, occupied))
     if open_slots == 0:
         return []
-    pool = [job for job in jobs if job.status == Status.staged]
+    pool = [
+        job
+        for job in jobs
+        if job.status == Status.staged and job.priority_score is not None
+    ]
     ordered = sort_by_priority(pool)
     cap = int(block["max_per_company"])
     counts: dict[tuple[str, ...], int] = {}
@@ -212,6 +259,7 @@ def select_shortlist(
         reasons,
         cap=cap,
         margin=int(block["diversity_margin"]),
+        targets=_targets(settings),
     )
     selected = sort_by_priority(selected)
     return [
@@ -228,6 +276,7 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
     async with session_scope() as session:
         staged = await get_jobs_by_status(session, Status.staged)
         pending = await get_jobs_by_status(session, Status.pending_review)
+    unranked = sum(1 for job in staged if job.priority_score is None)
     picks = select_shortlist(staged, config=settings, occupied=len(pending))
     now = datetime.now(UTC)
     chosen: list[int] = []
@@ -253,4 +302,5 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
         version=SHORTLIST_VERSION,
         config_hash=digest,
         selected_ids=tuple(chosen),
+        unranked=unranked,
     )

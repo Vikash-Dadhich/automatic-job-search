@@ -1,11 +1,22 @@
 # Which staged jobs enter the human review queue. This is not a score and not a filter.
 # Jobs that are not selected stay staged.
 
-version: phase13-v1
+version: phase13-v2
 
 shortlist:
   max_size: 20
   max_per_company: 2
-  # A different targeted family can replace the lowest selected job only when its
+  # A different target family can replace the lowest selected job only when its
   # priority is within this many points. Larger gaps do not lose a seat.
   diversity_margin: 5
+
+role_diversity:
+  enabled: true
+  # Seats that count as useful variety. UNKNOWN and OTHER are not targets.
+  target_families:
+    - PRODUCT_MANAGEMENT
+    - CONSULTING
+    - STRATEGY_TRANSFORMATION
+    - PRODUCT_MARKETING
+    - MARKETING
+    - PROGRAM_PROJECT_OPERATIONS

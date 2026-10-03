@@ -25,7 +25,7 @@ from core.db import (
 from orchestrator.pipeline import run_pipeline
 from scorer.shortlist import (
     SELECTED_BY_PRIORITY,
-    SELECTED_FOR_PORTFOLIO_DIVERSITY,
+    SELECTED_FOR_ROLE_DIVERSITY,
     SHORTLIST_VERSION,
     apply_shortlist,
     config_hash,
@@ -72,7 +72,7 @@ def _job(external_id: str, **kwargs: object) -> Job:
 
 def test_shortlist_config_loads_and_rejects_invalid(tmp_path: Path) -> None:
     loaded = load_shortlist_config()
-    assert loaded["version"] == "phase13-v1"
+    assert loaded["version"] == "phase13-v2"
     assert loaded["shortlist"] == {
         "max_size": 20,
         "max_per_company": 2,
@@ -88,7 +88,7 @@ def test_shortlist_config_loads_and_rejects_invalid(tmp_path: Path) -> None:
         load_shortlist_config(str(bad))
     flagged = tmp_path / "flag.yaml"
     flagged.write_text(
-        "version: phase13-v1\n"
+        "version: phase13-v2\n"
         "shortlist:\n"
         "  max_size: true\n"
         "  max_per_company: 2\n"
@@ -124,9 +124,10 @@ def test_priority_order_and_phase12_ties() -> None:
         "older",
         "weaker-fit",
         "missing-fit",
-        "no-priority",
     ]
     assert picks[-1].reason == SELECTED_BY_PRIORITY
+    assert tied[-1].status == Status.staged
+    assert tied[-1].priority_score is None
 
 
 def test_size_and_company_cap() -> None:
@@ -175,7 +176,7 @@ def test_family_diversity_is_a_soft_swap() -> None:
     )
     picks = select_shortlist(pm + [close], config=_config(max_size=4))
     assert [pick.job.external_id for pick in picks] == ["pm0", "pm1", "pm2", "consulting"]
-    assert picks[-1].reason == SELECTED_FOR_PORTFOLIO_DIVERSITY
+    assert picks[-1].reason == SELECTED_FOR_ROLE_DIVERSITY
     assert all(pick.reason == SELECTED_BY_PRIORITY for pick in picks[:-1])
 
     weak = _job("weak", company="ConsultCo", priority_score=70, id=11, role_family="CONSULTING")
@@ -197,6 +198,64 @@ def test_family_diversity_is_a_soft_swap() -> None:
     assert mixed[-1].job.external_id == "strategy"
     again = select_shortlist(pm + [close], config=_config(max_size=4))
     assert [pick.job.external_id for pick in again] == [pick.job.external_id for pick in picks]
+
+
+def test_diversity_respects_company_cap_and_ignores_secondary_family() -> None:
+    crowded = [
+        _job("a-pm", company="Acme", priority_score=95, id=1),
+        _job("b-pm", company="Beta", priority_score=90, id=2),
+        _job(
+            "a-consult",
+            company="Acme",
+            priority_score=89,
+            id=3,
+            role_family="CONSULTING",
+        ),
+    ]
+    picks = select_shortlist(crowded, config=_config(max_size=2, max_per_company=1))
+    assert [pick.job.external_id for pick in picks] == ["a-pm", "b-pm"]
+    labeled = _job(
+        "pm-hybrid",
+        company="Hybrid",
+        priority_score=89,
+        id=4,
+        role_family="PRODUCT_MANAGEMENT",
+        role_secondary_family="CONSULTING",
+    )
+    marketing = _job(
+        "marketing",
+        company="Market",
+        priority_score=87,
+        id=6,
+        role_family="MARKETING",
+    )
+    swapped = select_shortlist(
+        [
+            _job("pm0", priority_score=90, id=1, company="C0"),
+            labeled,
+            marketing,
+        ],
+        config=_config(max_size=2),
+    )
+    assert [pick.job.external_id for pick in swapped] == ["pm0", "marketing"]
+    other = _job("other", company="O", priority_score=88, id=5, role_family="OTHER")
+    no_other = select_shortlist(
+        [
+            _job("pm0", priority_score=90, id=1, company="C0"),
+            _job("pm1", priority_score=89, id=2, company="C1"),
+            other,
+        ],
+        config=_config(max_size=2),
+    )
+    assert [pick.job.external_id for pick in no_other] == ["pm0", "pm1"]
+    priority = labeled.priority_score
+    score = labeled.score
+    eligibility = labeled.eligibility_state
+    select_shortlist([labeled], config=_config())
+    assert labeled.priority_score == priority
+    assert labeled.score == score
+    assert labeled.eligibility_state == eligibility
+    assert labeled.role_family_weight is None
 
 
 def test_non_staged_jobs_are_ignored() -> None:
