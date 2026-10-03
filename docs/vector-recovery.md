@@ -18,6 +18,6 @@ The groups are:
 
 Dream companies, salary, and company prestige are not recovery inputs. The fit score, priority score, shortlist, and portfolio allocation are not changed here.
 
-`vector_decision` is `pass` when the gate accepts the job, `reject` when recovery also declines, and `recovered` when the job goes on to the normal scorer. `vector_recovery`, `vector_recovery_reason`, and `vector_recovery_hash` record the recovery result. A changed job description clears them. A changed recovery version, config, or input hash reopens a stored reject so the decision is made again. A recovery error leaves the vector reject in place.
+`vector_decision` is `pass` when the gate accepts the job, `reject` when recovery also declines, and `recovered` when the job goes on to the normal scorer. `vector_recovery`, `vector_recovery_reason`, and `vector_recovery_hash` record the recovery result. A changed job description clears them. A changed recovery version, config, job input, or candidate profile reopens a stored reject so the decision is made again. The stored hash includes a fingerprint of the profile, not the profile text. A recovery error leaves the vector reject in place.
 
 Configuration is `config/vector_recovery.yaml`, version `phase10-v2`.

@@ -14,8 +14,10 @@ from core.db import (
     get_job_by_id,
     session_scope,
 )
+from scorer.embeddings import profile_embed_text
+from scorer.embeddings import profile_hash as embed_profile_hash
 from scorer.engine import ScoreSummary, score_pending
-from scorer.vector_recovery import evaluate_recovery, load_recovery_config
+from scorer.vector_recovery import evaluate_recovery, load_recovery_config, recovery_input_hash
 from tests.test_scorer import FakeClient
 from tests.test_vector_gate import FakeEmbedder, _enable, _map, _seed
 
@@ -540,3 +542,176 @@ async def test_repeated_scoring_is_stable(
         assert saved is not None
         assert saved.score == 72
         assert saved.vector_decision == "recovered"
+
+
+def _exclude_company(profile: Profile, company: str) -> Profile:
+    blocked = profile.model_copy(deep=True)
+    blocked.exclusions.companies = [*blocked.exclusions.companies, company]
+    return blocked
+
+
+def _bare_job() -> Job:
+    return Job(
+        source=Source.linkedin,
+        external_id="hash-job",
+        title="Product Manager",
+        company="Acme",
+        url="https://example.com/hash-job",
+        description_clean=_DESC,
+        role_family="PRODUCT_MANAGEMENT",
+        role_confidence="high",
+        role_evidence=["own the roadmap"],
+    )
+
+
+def _assert_no_profile_text(profile: Profile, saved: Job) -> None:
+    stored = " ".join(
+        part
+        for part in (
+            saved.vector_recovery,
+            saved.vector_recovery_reason,
+            saved.vector_recovery_hash,
+        )
+        if part
+    )
+    for secret in (profile.identity.email, profile.identity.full_name, profile.identity.phone):
+        if secret:
+            assert secret not in stored
+    assert saved.vector_recovery_hash is not None
+    assert len(saved.vector_recovery_hash) == 64
+
+
+def test_unchanged_profile_keeps_the_same_recovery_hash(profile: Profile) -> None:
+    job = _bare_job()
+    first = recovery_input_hash(job, profile, structured_hash=None, structured_version=None)
+    second = recovery_input_hash(
+        job,
+        profile.model_copy(deep=True),
+        structured_hash=None,
+        structured_version=None,
+    )
+    assert first == second
+    assert profile.identity.email not in first
+
+
+def test_profile_change_changes_the_recovery_hash(profile: Profile) -> None:
+    job = _bare_job()
+    blocked = _exclude_company(profile, "Acme")
+    first = recovery_input_hash(job, profile, structured_hash=None, structured_version=None)
+    second = recovery_input_hash(job, blocked, structured_hash=None, structured_version=None)
+    assert first != second
+    assert profile.identity.full_name not in second
+
+
+async def test_unchanged_profile_keeps_a_cached_reject(
+    db_ready: object,
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    _enable(monkeypatch)
+    job = await _seed("cached-reject", title="Warehouse Associate")
+    _client, summary = await _score(profile, [(job, [0.0, 1.0])])
+    assert summary.vector_rejected == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        first_hash = saved.vector_recovery_hash
+    again_client, again = await _score(profile, [(job, [0.0, 1.0])])
+    assert again.scored == 0
+    assert again.vector_recovered == 0
+    assert again_client.calls == []
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.filtered_out
+        assert saved.vector_recovery == "rejected"
+        assert saved.vector_recovery_hash == first_hash
+        _assert_no_profile_text(profile, saved)
+
+
+async def test_profile_change_reconsiders_a_reject_that_now_fails_the_hard_filter(
+    db_ready: object,
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    _enable(monkeypatch)
+    job = await _seed("now-blocked", title="Warehouse Associate", company="Acme")
+    _client, summary = await _score(profile, [(job, [0.0, 1.0])])
+    assert summary.vector_rejected == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        first_hash = saved.vector_recovery_hash
+        assert saved.vector_recovery_reason == "insufficient_evidence"
+    blocked = _exclude_company(profile, "Acme")
+    client, again = await _score(blocked, [(job, [0.0, 1.0])])
+    assert again.scored == 0
+    assert again.vector_recovered == 0
+    assert client.calls == []
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.filtered_out
+        assert saved.vector_decision == "reject"
+        assert saved.vector_recovery_reason == "hard_filter"
+        assert saved.vector_recovery_hash != first_hash
+        assert saved.score == 0
+        _assert_no_profile_text(profile, saved)
+
+
+async def test_profile_change_that_passes_the_hard_filter_can_recover(
+    db_ready: object,
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    _enable(monkeypatch)
+    job = await _seed(
+        "now-open",
+        title="Product Manager",
+        company="Acme",
+        status=Status.filtered_out,
+    )
+    await _stamp(
+        job,
+        status=Status.filtered_out,
+        role_family="PRODUCT_MANAGEMENT",
+        role_confidence="high",
+        role_evidence=["own the product roadmap"],
+        embedding=[0.0, 1.0],
+        embedding_model=get_settings().openai_embedding_model,
+        vector_score=0.0,
+        vector_profile_hash=embed_profile_hash(profile_embed_text(profile)),
+        vector_decision="reject",
+        score=0,
+    )
+    await _store_doc(job, _doc(mba_internship=True))
+    blocked = _exclude_company(profile, "Acme")
+    async with session_scope() as session:
+        stored = await get_job_by_id(session, job.id or 0)
+        assert stored is not None
+    blocked_hash = recovery_input_hash(
+        stored,
+        blocked,
+        structured_hash=f"structured-{job.id}",
+        structured_version="phase19-v1",
+    )
+    await _stamp(
+        job,
+        vector_recovery="rejected",
+        vector_recovery_reason="hard_filter",
+        vector_recovery_hash=blocked_hash,
+    )
+    client, summary = await _score(profile, [(job, [0.0, 1.0])])
+    assert summary.scored == 1
+    assert summary.vector_recovered == 1
+    assert len(client.calls) == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.vector_decision == "recovered"
+        assert saved.vector_recovery_hash != blocked_hash
+        assert saved.score == 72
+        _assert_no_profile_text(profile, saved)

@@ -11,18 +11,22 @@ import json
 from pathlib import Path
 from typing import Any
 
-from config.profile import PROFILE_PATH, load_profile
+from config.profile import PROFILE_PATH, Profile, load_profile
 from config.settings import PROJECT_ROOT, Settings, get_settings
 
 _DIAGNOSTIC_PATH = PROJECT_ROOT / "storage" / "diagnostics" / "effective_config.json"
 
 
+def fingerprint_profile(profile: Profile) -> str:
+    """SHA-256 of canonical profile facts. The raw profile is not returned."""
+    payload = json.dumps(profile.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def profile_hash(path: Path | None = None) -> str:
     """SHA-256 of the parsed profile facts. Comments and key order do not matter."""
     profile_path = path or PROFILE_PATH
-    profile = load_profile(str(profile_path))
-    payload = json.dumps(profile.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode()).hexdigest()
+    return fingerprint_profile(load_profile(str(profile_path)))
 
 
 def public_config(settings: Settings | None = None) -> dict[str, Any]:

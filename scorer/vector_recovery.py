@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from config.diagnostics import fingerprint_profile
 from config.profile import Profile
 from core.db import Job
 from scraper.filters import evaluate_job
@@ -132,6 +133,7 @@ def _compiled(phrases: tuple[str, ...]) -> tuple[re.Pattern[str], ...]:
 
 def recovery_input_hash(
     job: Job,
+    profile: Profile,
     *,
     structured_hash: str | None,
     structured_version: str | None,
@@ -142,6 +144,7 @@ def recovery_input_hash(
     payload = {
         "version": RECOVERY_VERSION,
         "config": config_hash(active),
+        "profile": fingerprint_profile(profile),
         "role_family": job.role_family,
         "role_confidence": job.role_confidence,
         "role_evidence": job.role_evidence,
@@ -228,6 +231,7 @@ def evaluate_recovery(
     active = config if config is not None else load_recovery_config()
     digest = recovery_input_hash(
         job,
+        profile,
         structured_hash=structured_hash,
         structured_version=structured_version,
         config=active,
