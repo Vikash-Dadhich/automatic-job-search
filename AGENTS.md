@@ -169,7 +169,7 @@ Types: `uv run pyright` must report 0 errors (same bar as ruff/pytest).
 
 - Identity/dedup: `source`, `external_id`, `tenant`, `content_hash`.
 - Posting: `title`, `company`, `location`, `url`, `description_clean`, `posted_at`, `discovered_at`.
-- Scoring: `score` (0-100), `tier`, `justification` (list[str]), `outreach_draft`, `cover_letter`, `scored_at`, `embedding` (JD vector), `vector_score`, `vector_profile_hash`, `vector_decision` (`pass` or `reject`). A changed `content_hash` clears the four vector fields.
+- Scoring: `score` (0-100), `tier`, `justification` (list[str]), `outreach_draft`, `cover_letter`, `scored_at`, `embedding` (JD vector), `vector_score`, `vector_profile_hash`, `vector_decision` (`pass`, `reject`, or `recovered`), `vector_recovery`, `vector_recovery_reason`, `vector_recovery_hash`. A changed `content_hash` clears the vector and recovery fields.
 - Workflow: `status`, `resume_path`, `screenshot_path`, `application_answers` (dict JSON), `review_message_id`, `review_chat_id`, `decided_at`, `outcome`, `outcome_at`, `outcome_message_id`, `last_error`, `alerted_at`, `prep_pack_sent_at`, `created_at`, `updated_at`.
 
 `PlatformPacing` table, primary key `platform` (the apply runner uses `workday`): `multiplier`, `clean_streak`, `blocked_until`, `next_eligible_at`, `updated_at`. Compare those timestamps with `_as_utc`; SQLite returns them naive.

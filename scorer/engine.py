@@ -53,6 +53,7 @@ from scorer.embeddings import (
 from scorer.outreach import generate_outreach as draft_outreach
 from scorer.prerank import prerank_jobs
 from scorer.schemas import Evaluation, ScoreRaw
+from scorer.vector_recovery import RecoveryDecision, evaluate_recovery
 from scraper.filters import evaluate_job
 
 # Re-exported so callers and tests keep importing the client layer from scorer.engine.
@@ -167,6 +168,7 @@ class ScoreSummary:
     errors: int = 0
     skipped: int = 0
     vector_rejected: int = 0
+    vector_recovered: int = 0
     vector_errors: int = 0
     by_tier: dict[str, int] = field(default_factory=dict)
     error_details: list[str] = field(default_factory=list)
@@ -294,12 +296,16 @@ async def _save_vector(
     decision: str,
     *,
     reason: str | None = None,
+    recovery: RecoveryDecision | None = None,
 ) -> None:
     job.embedding = vector
     job.vector_score = score
     job.vector_profile_hash = digest
     job.vector_decision = decision
     job.embedding_model = get_settings().openai_embedding_model
+    job.vector_recovery = None if recovery is None else recovery.decision
+    job.vector_recovery_reason = None if recovery is None else recovery.reason
+    job.vector_recovery_hash = None if recovery is None else recovery.input_hash
     if job.id is None:
         return
     now = datetime.now(UTC)
@@ -312,6 +318,9 @@ async def _save_vector(
         target.vector_profile_hash = digest
         target.vector_decision = decision
         target.embedding_model = job.embedding_model
+        target.vector_recovery = job.vector_recovery
+        target.vector_recovery_reason = job.vector_recovery_reason
+        target.vector_recovery_hash = job.vector_recovery_hash
         if decision == "reject":
             target.score = 0
             target.tier = Tier.three
@@ -322,6 +331,29 @@ async def _save_vector(
             target.cover_letter = None
         target.updated_at = now
         session.add(target)
+
+
+async def _recovery_for(job: Job, profile: Profile) -> RecoveryDecision:
+    """Load the stored structured JD and apply the recovery rule."""
+    document: dict[str, Any] | None = None
+    structured_hash: str | None = None
+    structured_version: str | None = None
+    if job.id is not None:
+        from scraper.structured_jd import get_structured_jd
+
+        async with session_scope() as session:
+            row = await get_structured_jd(session, job.id)
+        if row is not None:
+            document = row.document if isinstance(row.document, dict) else None
+            structured_hash = row.content_hash
+            structured_version = row.version
+    return evaluate_recovery(
+        job,
+        profile,
+        document=document,
+        structured_hash=structured_hash,
+        structured_version=structured_version,
+    )
 
 
 async def _decide_vector(
@@ -340,7 +372,18 @@ async def _decide_vector(
         return "accept"
     threshold = get_settings().vector_threshold
     reason = f"vector gate: {score:.2f} < {threshold:.2f}"
-    await _save_vector(job, vector, score, digest, "reject", reason=reason)
+    try:
+        recovery = await _recovery_for(job, profile)
+    except Exception as exc:
+        log.warning("vector_recovery_failed", job_id=job.id, error=str(exc)[:200])
+        recovery = RecoveryDecision(False, "rejected", "recovery_failed", "")
+    if recovery.recovered:
+        await _save_vector(job, vector, score, digest, "recovered", recovery=recovery)
+        log.info("vector_recovery_recovered", job_id=job.id, reason=recovery.reason)
+        return "recovered"
+    await _save_vector(job, vector, score, digest, "reject", reason=reason, recovery=recovery)
+    if recovery.reason != "disabled":
+        log.info("vector_recovery_rejected", job_id=job.id, reason=recovery.reason)
     return "reject"
 
 
@@ -406,8 +449,73 @@ async def _reopen_vector_rejects(profile: Profile, embedder: Embedder | None) ->
             changed = True
         if clears_threshold(score):
             await _reopen_job(row.id, score, digest)
-        elif changed:
+            continue
+        if changed:
             await _touch_vector_score(row.id, score, digest)
+        await _maybe_recover_reject(row, profile, score, digest)
+
+
+async def _maybe_recover_reject(job: Job, profile: Profile, score: float, digest: str) -> None:
+    """Reopen a stored reject when recovery evidence or config has changed."""
+    if job.id is None:
+        return
+    try:
+        decision = await _recovery_for(job, profile)
+    except Exception as exc:
+        log.warning("vector_recovery_failed", job_id=job.id, error=str(exc)[:200])
+        return
+    if (
+        decision.input_hash
+        and decision.input_hash == job.vector_recovery_hash
+        and job.vector_recovery == "rejected"
+    ):
+        return
+    if decision.recovered:
+        await _reopen_recovered(job.id, score, digest, decision)
+        return
+    await _refresh_recovery_reject(job.id, decision)
+
+
+async def _reopen_recovered(
+    job_id: int,
+    score: float,
+    digest: str,
+    decision: RecoveryDecision,
+) -> None:
+    async with session_scope() as session:
+        target = await get_job_by_id(session, job_id)
+        if target is None or target.status != Status.filtered_out:
+            return
+        if target.vector_decision != "reject":
+            return
+        target.status = Status.discovered
+        target.score = None
+        target.tier = None
+        target.justification = None
+        target.scored_at = None
+        target.vector_score = score
+        target.vector_profile_hash = digest
+        target.vector_decision = "recovered"
+        target.vector_recovery = decision.decision
+        target.vector_recovery_reason = decision.reason
+        target.vector_recovery_hash = decision.input_hash
+        target.updated_at = datetime.now(UTC)
+        session.add(target)
+    log.info("vector_recovery_reopened", job_id=job_id, reason=decision.reason)
+
+
+async def _refresh_recovery_reject(job_id: int, decision: RecoveryDecision) -> None:
+    async with session_scope() as session:
+        target = await get_job_by_id(session, job_id)
+        if target is None or target.status != Status.filtered_out:
+            return
+        if target.vector_decision != "reject":
+            return
+        target.vector_recovery = decision.decision
+        target.vector_recovery_reason = decision.reason
+        target.vector_recovery_hash = decision.input_hash or target.vector_recovery_hash
+        target.updated_at = datetime.now(UTC)
+        session.add(target)
 
 
 async def _reopen_job(job_id: int, score: float, digest: str) -> None:
@@ -442,7 +550,7 @@ async def _apply_vector_gate(
     profile: Profile,
     cooldown: set[str],
     embedder: Embedder | None,
-) -> tuple[list[Job], int, int, int]:
+) -> tuple[list[Job], int, int, int, int]:
     """Walk best-first. Rejects do not consume ``score_budget``.
 
     Returns accepted jobs, deferred count, reject count, and fail-open count.
@@ -453,6 +561,7 @@ async def _apply_vector_gate(
     width = settings.vector_dimensions
     accepted: list[Job] = []
     rejected = 0
+    recovered = 0
     errors = 0
     digest = profile_hash(profile_embed_text(profile))
     profile_vector: list[float] | None = None
@@ -466,12 +575,14 @@ async def _apply_vector_gate(
         return profile_vector
 
     async def accept_or_reject(job: Job, vector: list[float], score: float) -> None:
-        nonlocal rejected
+        nonlocal rejected, recovered
         choice = await _decide_vector(job, vector, score, digest, profile)
-        if choice == "accept":
-            accepted.append(job)
-        else:
+        if choice == "reject":
             rejected += 1
+            return
+        accepted.append(job)
+        if choice == "recovered":
+            recovered += 1
 
     i = 0
     while i < len(ranked):
@@ -555,7 +666,7 @@ async def _apply_vector_gate(
             processed += 1
         i += processed
 
-    return accepted, len(ranked) - i, rejected, errors
+    return accepted, len(ranked) - i, rejected, errors, recovered
 
 
 class Scorer:
@@ -841,7 +952,13 @@ class Scorer:
                 cooldown_companies,
                 active_embedder,
             )
-            jobs, deferred, summary.vector_rejected, summary.vector_errors = gated
+            (
+                jobs,
+                deferred,
+                summary.vector_rejected,
+                summary.vector_errors,
+                summary.vector_recovered,
+            ) = gated
             summary.skipped += deferred
             summary.filtered_out += summary.vector_rejected
         else:
@@ -916,6 +1033,7 @@ class Scorer:
             errors=summary.errors,
             skipped=summary.skipped,
             vector_rejected=summary.vector_rejected,
+            vector_recovered=summary.vector_recovered,
             vector_errors=summary.vector_errors,
             by_tier=summary.by_tier,
             concurrency=workers,

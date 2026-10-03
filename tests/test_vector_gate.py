@@ -336,6 +336,9 @@ async def test_content_hash_change_clears_vector(db_ready: object) -> None:
         saved.vector_score = 0.2
         saved.vector_profile_hash = "abc"
         saved.vector_decision = "reject"
+        saved.vector_recovery = "rejected"
+        saved.vector_recovery_reason = "insufficient_evidence"
+        saved.vector_recovery_hash = "old-recovery"
         session.add(saved)
         job_id = saved.id
 
@@ -356,6 +359,8 @@ async def test_content_hash_change_clears_vector(db_ready: object) -> None:
         assert kept is not None
         assert kept.embedding == [1.0, 0.0]
         assert kept.vector_decision == "reject"
+        assert kept.vector_recovery == "rejected"
+        assert kept.vector_recovery_hash == "old-recovery"
 
     changed = Job(
         source=Source.linkedin,
@@ -376,6 +381,9 @@ async def test_content_hash_change_clears_vector(db_ready: object) -> None:
         assert cleared.vector_score is None
         assert cleared.vector_profile_hash is None
         assert cleared.vector_decision is None
+        assert cleared.vector_recovery is None
+        assert cleared.vector_recovery_reason is None
+        assert cleared.vector_recovery_hash is None
 
 
 async def test_reopen_when_threshold_drops(

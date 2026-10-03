@@ -119,6 +119,9 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "vector_score": "REAL",
         "vector_profile_hash": "VARCHAR(64)",
         "vector_decision": "VARCHAR(16)",
+        "vector_recovery": "VARCHAR(16)",
+        "vector_recovery_reason": "VARCHAR(256)",
+        "vector_recovery_hash": "VARCHAR(64)",
         "embedding_model": "VARCHAR(64)",
         "discovery_family": "VARCHAR(64)",
         "discovery_bucket": "VARCHAR(64)",
@@ -179,6 +182,9 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "vector_score": "DOUBLE PRECISION",
         "vector_profile_hash": "VARCHAR(64)",
         "vector_decision": "VARCHAR(16)",
+        "vector_recovery": "VARCHAR(16)",
+        "vector_recovery_reason": "VARCHAR(256)",
+        "vector_recovery_hash": "VARCHAR(64)",
         "embedding_model": "VARCHAR(64)",
         "discovery_family": "VARCHAR(64)",
         "discovery_bucket": "VARCHAR(64)",
@@ -334,11 +340,14 @@ class Job(SQLModel, table=True):
     cover_letter: str | None = Field(default=None)
     scored_at: datetime | None = _tz_datetime(nullable=True)
     # JD embedding and the cosine it produced against one profile text.
-    # vector_decision is "pass" or "reject"; only rejects are reopened.
+    # vector_decision is "pass", "reject", or "recovered". Only rejects are reopened.
     embedding: list[float] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     vector_score: float | None = Field(default=None)
     vector_profile_hash: str | None = Field(default=None, max_length=64)
     vector_decision: str | None = Field(default=None, max_length=16)
+    vector_recovery: str | None = Field(default=None, max_length=16)
+    vector_recovery_reason: str | None = Field(default=None, max_length=256)
+    vector_recovery_hash: str | None = Field(default=None, max_length=64)
     embedding_model: str | None = Field(default=None, max_length=64)
     # How the posting entered discovery. Independent of the fit score.
     discovery_family: str | None = Field(default=None, max_length=64)
@@ -1098,6 +1107,9 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.vector_score = None
         existing.vector_profile_hash = None
         existing.vector_decision = None
+        existing.vector_recovery = None
+        existing.vector_recovery_reason = None
+        existing.vector_recovery_hash = None
         existing.embedding_model = None
         existing.role_family = None
         existing.role_subfamily = None

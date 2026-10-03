@@ -330,7 +330,7 @@ A job skips the gate and goes straight to the fit model when:
 
 A dream company always passes, even below 0.50. None are configured.
 
-Otherwise cosine similarity versus your profile vector must be at least 0.50. Below that, the job is saved as a vector reject and is not sent to `gpt-5-mini`. Rejects do not consume `SCORE_BUDGET` when a budget is set.
+Otherwise cosine similarity versus your profile vector must be at least 0.50. Below that, the job is a vector reject. A separate recovery check can send it to `gpt-5-mini` only when several independent role signals agree. A reject that is not recovered is not scored. Rejects do not consume `SCORE_BUDGET` when a budget is set. Recovery does not change the 0.50 threshold.
 
 The profile vector is cached on disk under `storage/embeddings/` keyed by a hash of the profile text. A profile edit changes the hash and forces a new embedding.
 
@@ -499,7 +499,7 @@ Workday review cards (approve / manual / discard) are a different Telegram messa
 fetched
   -> filtered_out          hard filter failed (section 3)
   -> discovered            hard filter passed
-       -> filtered_out     embedding cosine < 0.50
+       -> filtered_out     embedding cosine < 0.50 and recovery declined
        -> filtered_out     fit score < 65 (Tier 3)
        -> staged           fit score >= 65 (Tier 2) or >= 85 (Tier 1)
             -> Telegram    score > 75, or score >= 60 while the file has under 20
