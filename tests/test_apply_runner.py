@@ -15,9 +15,11 @@ class FakeApplicator:
     def __init__(self, *, mode: str = "ok") -> None:
         self.mode = mode
         self.calls: list[int | None] = []
+        self.seen_titles: list[str] = []
 
     async def apply(self, job: Job) -> ApplyResult:
         self.calls.append(job.id)
+        self.seen_titles.append(job.title)
         if self.mode == "blocker":
             raise BlockerError("cloudflare", screenshot_path="/tmp/blocker.png")
         if self.mode == "error":
@@ -262,34 +264,147 @@ async def test_explicit_id_skips_clearly_ineligible(db_ready: Path) -> None:
         assert saved.eligibility_state == "CLEARLY_INELIGIBLE"
 
 
+def _script_reloads(
+    monkeypatch: pytest.MonkeyPatch,
+    mutate_final,
+) -> dict[str, int]:
+    """First reload stays as stored. The reload immediately before apply is mutated."""
+    import automation.runner as runner_mod
+
+    real_reload = runner_mod._reload_job
+    state = {"n": 0}
+
+    async def sequenced(job_id: int | None) -> Job | None:
+        state["n"] += 1
+        current = await real_reload(job_id)
+        if current is not None and state["n"] >= 2:
+            mutate_final(current)
+        return current
+
+    monkeypatch.setattr(runner_mod, "_reload_job", sequenced)
+    return state
+
+
+async def test_final_reload_still_allocated_reaches_applicator(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    job = await _seed_job(external_id="still", portfolio_decision="ALLOCATED")
+
+    def mark(current: Job) -> None:
+        current.title = "FRESH"
+
+    state = _script_reloads(monkeypatch, mark)
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert state["n"] == 2
+    assert fake.calls == [job.id]
+    assert fake.seen_titles == ["FRESH"]
+    assert summary.applied == 1
+    assert summary.skipped == 0
+
+
 async def test_allocation_removed_before_execution_is_skipped(
     db_ready: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del db_ready
-    import automation.runner as runner_mod
-
     job = await _seed_job(external_id="stale", portfolio_decision="ALLOCATED")
-    real_reload = runner_mod._reload_job
-
-    async def stale(job_id: int | None) -> Job | None:
-        current = await real_reload(job_id)
-        if current is None:
-            return None
-        current.portfolio_decision = "DEFERRED"
-        return current
-
-    monkeypatch.setattr(runner_mod, "_reload_job", stale)
+    state = _script_reloads(
+        monkeypatch,
+        lambda current: setattr(current, "portfolio_decision", "DEFERRED"),
+    )
     fake = FakeApplicator()
     summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert state["n"] == 2
     assert fake.calls == []
-    assert summary.skipped == 1
     assert summary.applied == 0
+    assert summary.skipped == 1
     async with session_scope() as session:
         saved = await get_job_by_id(session, job.id or 0)
         assert saved is not None
         assert saved.status == Status.staged
         assert saved.portfolio_decision == "ALLOCATED"
+
+
+async def test_final_reload_blocked_company_is_skipped(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    job = await _seed_job(external_id="late-block", portfolio_decision="ALLOCATED")
+    _script_reloads(
+        monkeypatch,
+        lambda current: setattr(current, "portfolio_decision", "BLOCKED_COMPANY"),
+    )
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.applied == 0
+    assert summary.skipped == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "ALLOCATED"
+
+
+async def test_final_reload_non_staged_is_skipped(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    job = await _seed_job(external_id="late-status", portfolio_decision="ALLOCATED")
+    _script_reloads(
+        monkeypatch,
+        lambda current: setattr(current, "status", Status.pending_review),
+    )
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.applied == 0
+    assert summary.skipped == 1
+    assert summary.errors == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "ALLOCATED"
+
+
+async def test_final_reload_clearly_ineligible_is_skipped(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    job = await _seed_job(external_id="late-ineligible", portfolio_decision="ALLOCATED")
+    _script_reloads(
+        monkeypatch,
+        lambda current: setattr(current, "eligibility_state", "CLEARLY_INELIGIBLE"),
+    )
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.applied == 0
+    assert summary.skipped == 1
+    assert summary.errors == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "ALLOCATED"
+        assert saved.eligibility_state != "CLEARLY_INELIGIBLE"
+
+
+async def test_unrestricted_apply_does_not_require_allocation(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="legacy", portfolio_decision="DEFERRED")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, limit=10)
+    assert fake.calls == [job.id]
+    assert summary.applied == 1
+    assert summary.skipped == 0
 
 
 async def test_duplicate_explicit_ids_apply_once(db_ready: Path) -> None:

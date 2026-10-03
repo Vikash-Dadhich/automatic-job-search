@@ -195,6 +195,13 @@ class ApplyRunner:
 
             try:
                 job = await _ensure_tenant(job)
+                if require_allocation:
+                    fresh = await _reload_job(job.id)
+                    if fresh is None or not _ready_for_explicit_apply(fresh):
+                        summary.skipped += 1
+                        _log_explicit_skip(fresh, job.id)
+                        continue
+                    job = fresh
                 result = await applicator.apply(job)
                 await self._persist_success(job, result)
                 if settings.apply_pacing_enabled:
