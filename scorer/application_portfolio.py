@@ -313,6 +313,7 @@ async def apply_portfolio(*, config: dict[str, Any] | None = None) -> PortfolioS
     )
     now = datetime.now(UTC)
     persisted = 0
+    persisted_jobs: list[Job] = []
     company_counts: dict[tuple[str, ...], int] = {}
     for item in decisions:
         if item.job.id is None:
@@ -334,6 +335,7 @@ async def apply_portfolio(*, config: dict[str, Any] | None = None) -> PortfolioS
                     reason = "blocked_company_concentration"
                 else:
                     persisted += 1
+                    persisted_jobs.append(item.job)
                     if key is not None:
                         company_counts[key] = company_counts.get(key, 0) + 1
             target.portfolio_version = PORTFOLIO_VERSION
@@ -342,16 +344,17 @@ async def apply_portfolio(*, config: dict[str, Any] | None = None) -> PortfolioS
             target.portfolio_config_hash = digest
             target.updated_at = now
             session.add(target)
-    chosen = allocated_jobs(decisions)
     counts = {ALLOCATED: 0, DEFERRED: 0, BLOCKED_COMPANY: 0, BLOCKED_CAPACITY: 0}
     for item in decisions:
         counts[item.decision] = counts.get(item.decision, 0) + 1
+    saved = sort_by_priority(persisted_jobs)
+    saved_ids = tuple(job.id for job in saved if job.id is not None)
     return PortfolioSummary(
-        allocated=counts[ALLOCATED],
+        allocated=len(saved_ids),
         deferred=counts[DEFERRED],
         blocked_company=counts[BLOCKED_COMPANY],
         blocked_capacity=counts[BLOCKED_CAPACITY],
-        allocated_ids=tuple(job.id for job in chosen if job.id is not None),
+        allocated_ids=saved_ids,
         version=PORTFOLIO_VERSION,
         config_hash=digest,
     )

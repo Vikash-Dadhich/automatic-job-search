@@ -36,4 +36,4 @@ While a bucket is still under its share, its own highest-priority jobs are taken
 
 ## Pipeline
 
-When apply is enabled, portfolio runs immediately before apply and passes the allocated staged ids into the existing runner. The runner still refuses anything that is not `staged`. When apply is disabled, portfolio does not run, so turning the code on does not start applications. Workday pacing is unchanged. This layer does not submit, does not learn from interviews or offers, and does not score companies.
+When apply is enabled, portfolio runs immediately before apply and passes the ids it actually saved as `ALLOCATED` into the existing runner. A job that was only planned, then skipped because it was no longer staged or eligible, is not in that list. The runner still refuses anything that is not `staged`. When apply is disabled, portfolio does not run, so turning the code on does not start applications. Workday pacing is unchanged. This layer does not submit, does not learn from interviews or offers, and does not score companies.

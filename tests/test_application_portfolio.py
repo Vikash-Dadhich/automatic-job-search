@@ -523,3 +523,175 @@ async def test_real_cooldown_ignores_an_ignored_job(db_ready: Path) -> None:
         assert saved.status == Status.staged
         assert saved.portfolio_decision == BLOCKED_COMPANY
         assert saved.score == 80
+
+
+def _workday(external_id: str, **kwargs: object) -> Job:
+    return _job(
+        external_id,
+        source=Source.workday,
+        resume_path=f"/tmp/{external_id}.pdf",
+        **kwargs,
+    )
+
+
+class _NotStaged:
+    def __init__(self, job_id: int) -> None:
+        self.id = job_id
+        self.status = Status.submitted
+        self.eligibility_state = "LIKELY_ELIGIBLE"
+        self.priority_score = 90
+        self.resume_path = "/tmp/x.pdf"
+        self.source = Source.workday
+        self.url = "https://example.com/x"
+        self.company = "Gone"
+
+
+async def test_skipped_allocation_is_not_returned(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    async with session_scope() as session:
+        only = await upsert_job(session, _workday("only", company="Only", priority_score=90))
+        assert only.id is not None
+        only_id = only.id
+    real_get = get_job_by_id
+
+    async def skip(session: object, job_id: int) -> object:
+        if job_id == only_id:
+            return _NotStaged(job_id)
+        return await real_get(session, job_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("scorer.application_portfolio.get_job_by_id", skip)
+    summary = await apply_portfolio()
+    assert summary.allocated_ids == ()
+    assert summary.allocated == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, only_id)
+        assert saved is not None
+        assert saved.portfolio_decision is None
+        assert saved.status == Status.staged
+
+
+async def test_persisted_allocation_is_returned(db_ready: Path) -> None:
+    del db_ready
+    async with session_scope() as session:
+        ready = await upsert_job(session, _workday("ready", company="Ready", priority_score=90))
+        assert ready.id is not None
+        ready_id = ready.id
+    summary = await apply_portfolio()
+    assert summary.allocated_ids == (ready_id,)
+    assert summary.allocated == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, ready_id)
+        assert saved is not None
+        assert saved.portfolio_decision == ALLOCATED
+
+
+async def test_mixed_persist_returns_only_the_saved_allocation(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    monkeypatch.setenv("APPLY_LIMIT", "2")
+    get_settings.cache_clear()
+    async with session_scope() as session:
+        first = await upsert_job(session, _workday("kept", company="Kept", priority_score=90))
+        second = await upsert_job(session, _workday("lost", company="Lost", priority_score=80))
+        assert first.id is not None and second.id is not None
+        kept_id, lost_id = first.id, second.id
+    real_get = get_job_by_id
+
+    async def skip_lost(session: object, job_id: int) -> object:
+        if job_id == lost_id:
+            return _NotStaged(job_id)
+        return await real_get(session, job_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("scorer.application_portfolio.get_job_by_id", skip_lost)
+    summary = await apply_portfolio()
+    assert summary.allocated == 1
+    assert summary.allocated_ids == (kept_id,)
+    async with session_scope() as session:
+        lost = await get_job_by_id(session, lost_id)
+        assert lost is not None
+        assert lost.portfolio_decision is None
+        assert lost.status == Status.staged
+
+
+async def test_pipeline_apply_receives_only_persisted_ids(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    monkeypatch.setenv("APPLY_LIMIT", "2")
+    get_settings.cache_clear()
+    async with session_scope() as session:
+        first = await upsert_job(session, _workday("pipe-a", company="PipeA", priority_score=90))
+        second = await upsert_job(session, _workday("pipe-b", company="PipeB", priority_score=70))
+        assert first.id is not None and second.id is not None
+        kept_id, lost_id = first.id, second.id
+    real_get = get_job_by_id
+
+    async def skip_lost(session: object, job_id: int) -> object:
+        if job_id == lost_id:
+            return _NotStaged(job_id)
+        return await real_get(session, job_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("scorer.application_portfolio.get_job_by_id", skip_lost)
+    seen: list[list[int]] = []
+
+    async def record_apply(**kwargs: object) -> object:
+        raw = kwargs.get("job_ids")
+        values = raw if isinstance(raw, list) else []
+        seen.append([item for item in values if isinstance(item, int)])
+        return object()
+
+    async def noop() -> None:
+        return None
+
+    import orchestrator.pipeline as pipeline_mod
+
+    async def noop_stage() -> dict[str, list[int]]:
+        return {"selected_ids": []}
+
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", noop)
+    monkeypatch.setattr(pipeline_mod, "_score_pending", noop)
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", noop_stage)
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", noop)
+    monkeypatch.setattr(pipeline_mod, "_apply_pending", record_apply)
+    await run_pipeline(
+        enable_apply=True,
+        enable_reviews=False,
+        enable_prep_pack=False,
+        enable_suggestions=False,
+        enable_benchmark=False,
+    )
+    assert seen == [[kept_id]]
+
+
+async def test_skipped_plan_does_not_consume_capacity(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    monkeypatch.setenv("APPLY_LIMIT", "2")
+    get_settings.cache_clear()
+    async with session_scope() as session:
+        first = await upsert_job(session, _workday("skip-me", company="Skip", priority_score=95))
+        second = await upsert_job(session, _workday("take-me", company="Take", priority_score=70))
+        third = await upsert_job(session, _workday("wait", company="Wait", priority_score=10))
+        assert first.id and second.id and third.id
+        skip_id, take_id, wait_id = first.id, second.id, third.id
+    real_get = get_job_by_id
+
+    async def skip_first(session: object, job_id: int) -> object:
+        if job_id == skip_id:
+            return _NotStaged(job_id)
+        return await real_get(session, job_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("scorer.application_portfolio.get_job_by_id", skip_first)
+    summary = await apply_portfolio()
+    assert summary.allocated == len(summary.allocated_ids)
+    assert summary.allocated <= 2
+    assert summary.allocated_ids == (take_id,)
+    assert wait_id not in summary.allocated_ids
