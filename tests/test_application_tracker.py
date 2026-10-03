@@ -116,6 +116,7 @@ async def test_prefill_starts_an_application_without_submitting(db_ready: Path) 
                 source=Source.workday,
                 resume_path="/tmp/resume.pdf",
                 url="https://acme.wd5.myworkdayjobs.com/en-US/External/job/2",
+                portfolio_decision="ALLOCATED",
             ),
         )
         assert job.id
@@ -145,6 +146,7 @@ async def test_blocker_and_manual_takeover_are_not_submissions(db_ready: Path) -
                 source=Source.workday,
                 resume_path="/tmp/resume.pdf",
                 url="https://acme.wd5.myworkdayjobs.com/en-US/External/job/3",
+                portfolio_decision="ALLOCATED",
             ),
         )
         manual = await upsert_job(

@@ -42,6 +42,36 @@ class ApplySummary:
     error_details: list[str] = field(default_factory=list)
 
 
+def _ready_for_explicit_apply(job: Job | None) -> bool:
+    """Portfolio handed this id. It must still be staged, allocated, and applyable."""
+    return (
+        job is not None
+        and job.status == Status.staged
+        and job.portfolio_decision == "ALLOCATED"
+        and job.eligibility_state != "CLEARLY_INELIGIBLE"
+        and _eligible(job)
+    )
+
+
+def _log_explicit_skip(job: Job | None, job_id: int | None) -> None:
+    if job is not None and job.portfolio_decision != "ALLOCATED":
+        log.info("apply_skipped_portfolio_not_allocated", job_id=job_id)
+        return
+    log.info(
+        "apply_skipped",
+        job_id=job_id,
+        source=job.source.value if job is not None and job.source else None,
+        has_resume=bool(job.resume_path) if job is not None else False,
+    )
+
+
+async def _reload_job(job_id: int | None) -> Job | None:
+    if job_id is None:
+        return None
+    async with session_scope() as session:
+        return await get_job_by_id(session, job_id)
+
+
 def _eligible(job: Job) -> bool:
     """Workday source OR any source whose URL is a Workday company apply link."""
     if not job.resume_path:
@@ -109,6 +139,7 @@ class ApplyRunner:
         applicator = applicator or self._resolve_applicator()
         summary = ApplySummary()
 
+        require_allocation = job_ids is not None
         async with session_scope() as session:
             if job_ids is None:
                 jobs = await get_jobs_by_status(
@@ -118,17 +149,34 @@ class ApplyRunner:
                 )
             else:
                 jobs = []
+                seen: set[int] = set()
                 for job_id in job_ids:
-                    job = await get_job_by_id(session, job_id)
-                    if job is not None and job.status == Status.staged:
-                        jobs.append(job)
+                    if job_id in seen:
+                        summary.skipped += 1
+                        log.info("apply_skipped", job_id=job_id, reason="duplicate")
+                        continue
+                    seen.add(job_id)
+                    loaded = await get_job_by_id(session, job_id)
+                    if loaded is not None and _ready_for_explicit_apply(loaded):
+                        jobs.append(loaded)
+                        continue
+                    job = loaded
+                    summary.skipped += 1
+                    _log_explicit_skip(job, job_id)
 
         if not jobs:
             log.info("apply_pending_empty")
             return summary
 
         for job in jobs:
-            if not _eligible(job):
+            if require_allocation:
+                current = await _reload_job(job.id)
+                if current is None or not _ready_for_explicit_apply(current):
+                    summary.skipped += 1
+                    _log_explicit_skip(current, job.id)
+                    continue
+                job = current
+            elif not _eligible(job):
                 summary.skipped += 1
                 log.info(
                     "apply_skipped",
@@ -257,8 +305,9 @@ async def apply_pending(
 ) -> ApplySummary:
     """Module-level entry point used by README / Step 7.
 
-    ``job_ids`` limits the run to those staged rows, in that order.
-    ``None`` keeps the previous staged query.
+    ``job_ids`` limits the run to those rows, in that order. Each must still be
+    staged, Workday-eligible, and ``portfolio_decision`` ALLOCATED.
+    ``None`` keeps the previous staged query and does not require a portfolio decision.
     """
     return await ApplyRunner(applicator=applicator, profile=profile).apply_pending(
         limit=limit,

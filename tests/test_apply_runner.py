@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from automation.runner import apply_pending
 from automation.workday import ApplyResult, BlockerError
 from core.db import Job, Source, Status, get_job_by_id, session_scope, upsert_job
@@ -37,6 +39,8 @@ async def _seed_job(
     resume_path: str | None = "/tmp/resume.pdf",
     external_id: str = "wd-apply-1",
     url: str | None = None,
+    portfolio_decision: str | None = None,
+    eligibility_state: str | None = None,
 ) -> Job:
     default_url = (
         "https://www.linkedin.com/jobs/view/123"
@@ -52,6 +56,8 @@ async def _seed_job(
         tenant="acme" if source == Source.workday else None,
         status=status,
         resume_path=resume_path,
+        portfolio_decision=portfolio_decision,
+        eligibility_state=eligibility_state,
     )
     async with session_scope() as session:
         return await upsert_job(session, job)
@@ -166,3 +172,150 @@ async def test_apply_pending_empty(db_ready: Path) -> None:
     summary = await apply_pending(applicator=FakeApplicator())
     assert summary.applied == 0
     assert summary.skipped == 0
+
+
+async def test_explicit_id_runs_only_when_allocated(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="allocated", portfolio_decision="ALLOCATED")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == [job.id]
+    assert summary.applied == 1
+    assert summary.skipped == 0
+
+
+async def test_explicit_id_skips_deferred(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="deferred", portfolio_decision="DEFERRED")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    assert summary.applied == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "DEFERRED"
+
+
+async def test_explicit_id_skips_missing_portfolio_decision(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="unset")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    assert summary.applied == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision is None
+
+
+async def test_explicit_id_skips_blocked_company(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="blocked-co", portfolio_decision="BLOCKED_COMPANY")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    assert summary.applied == 0
+    assert summary.errors == 0
+
+
+async def test_explicit_id_skips_non_staged_allocation(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(
+        external_id="already",
+        status=Status.pending_review,
+        portfolio_decision="ALLOCATED",
+    )
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.pending_review
+
+
+async def test_explicit_id_skips_clearly_ineligible(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(
+        external_id="ineligible",
+        portfolio_decision="ALLOCATED",
+        eligibility_state="CLEARLY_INELIGIBLE",
+    )
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    assert summary.applied == 0
+    assert summary.errors == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.eligibility_state == "CLEARLY_INELIGIBLE"
+
+
+async def test_allocation_removed_before_execution_is_skipped(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    import automation.runner as runner_mod
+
+    job = await _seed_job(external_id="stale", portfolio_decision="ALLOCATED")
+    real_reload = runner_mod._reload_job
+
+    async def stale(job_id: int | None) -> Job | None:
+        current = await real_reload(job_id)
+        if current is None:
+            return None
+        current.portfolio_decision = "DEFERRED"
+        return current
+
+    monkeypatch.setattr(runner_mod, "_reload_job", stale)
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0])
+    assert fake.calls == []
+    assert summary.skipped == 1
+    assert summary.applied == 0
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, job.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "ALLOCATED"
+
+
+async def test_duplicate_explicit_ids_apply_once(db_ready: Path) -> None:
+    del db_ready
+    job = await _seed_job(external_id="dup", portfolio_decision="ALLOCATED")
+    fake = FakeApplicator()
+    summary = await apply_pending(applicator=fake, job_ids=[job.id or 0, job.id or 0])
+    assert fake.calls == [job.id]
+    assert summary.applied == 1
+    assert summary.skipped == 1
+
+
+async def test_pipeline_ids_require_current_allocation(db_ready: Path) -> None:
+    del db_ready
+    allocated = await _seed_job(external_id="pipe-yes", portfolio_decision="ALLOCATED")
+    deferred = await _seed_job(external_id="pipe-no", portfolio_decision="DEFERRED")
+    fake = FakeApplicator()
+    summary = await apply_pending(
+        applicator=fake,
+        job_ids=[allocated.id or 0, deferred.id or 0],
+    )
+    assert fake.calls == [allocated.id]
+    assert summary.applied == 1
+    assert summary.skipped == 1
+    async with session_scope() as session:
+        saved = await get_job_by_id(session, deferred.id or 0)
+        assert saved is not None
+        assert saved.status == Status.staged
+        assert saved.portfolio_decision == "DEFERRED"
