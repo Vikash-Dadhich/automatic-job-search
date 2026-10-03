@@ -217,15 +217,13 @@ def jd_evidence_quality_component(
     job: Job,
     config: dict[str, Any],
     structured: Any = None,
-) -> int:
-    """Evidence completeness. A long description is not automatically better."""
+) -> int | None:
+    """Evidence completeness. A missing description is omitted, not penalized."""
     if job.jd_truncated is True or job.jd_status == "truncated":
         return _scale(config, "jd_quality", "truncated")
     status = job.jd_status or ""
-    if status in {"suspicious", "missing"}:
-        return _scale(config, "jd_quality", status)
-    if not (job.description_clean or "").strip():
-        return _scale(config, "jd_quality", "missing")
+    if status in {"suspicious", "missing"} or not (job.description_clean or "").strip():
+        return None
     explicit = _explicit_sections(structured)
     if explicit is None:
         return 80
@@ -471,9 +469,11 @@ def _input_hash(
         "role_subfamily": job.role_subfamily,
         "role_confidence": job.role_confidence,
         "role_classifier_version": job.role_classifier_version,
+        "role_evidence": job.role_evidence,
         "role_secondary_family": job.role_secondary_family,
         "role_secondary_subfamily": job.role_secondary_subfamily,
         "role_secondary_confidence": job.role_secondary_confidence,
+        "role_secondary_evidence": job.role_secondary_evidence,
         "eligibility_state": job.eligibility_state,
         "eligibility_version": job.eligibility_version,
         "jd_status": job.jd_status,

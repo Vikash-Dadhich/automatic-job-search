@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 import scorer.priority as priority_mod
 from config.profile import Profile
 from core.db import Job, Source, Status
@@ -206,3 +208,78 @@ def test_us_presence_does_not_change_eligibility(profile: Profile) -> None:
     assert decision.components["program_evidence"] == 50
     assert decision.input_hash == without.input_hash
     assert decision.score == without.score
+
+
+def test_missing_jd_is_omitted_and_truncated_stays_lower(profile: Profile) -> None:
+    present = calculate_priority(_job(), profile, now=NOW)
+    missing = calculate_priority(
+        _job(description_clean=None, jd_status="missing"),
+        profile,
+        now=NOW,
+    )
+    suspicious = calculate_priority(
+        _job(description_clean="Intern.", jd_status="suspicious"),
+        profile,
+        now=NOW,
+    )
+    truncated = calculate_priority(
+        _job(jd_truncated=True, jd_status="truncated"),
+        profile,
+        now=NOW,
+    )
+    assert present.components["jd_evidence_quality"] == 80
+    assert missing.components["jd_evidence_quality"] is None
+    assert suspicious.components["jd_evidence_quality"] is None
+    assert truncated.components["jd_evidence_quality"] == 40
+    assert present.score > truncated.score
+
+
+def test_secondary_role_must_be_a_different_target_family(profile: Profile) -> None:
+    same = calculate_priority(
+        _job(role_secondary_family="PRODUCT_MANAGEMENT"),
+        profile,
+        now=NOW,
+    )
+    other = calculate_priority(
+        _job(role_secondary_family="OTHER"),
+        profile,
+        now=NOW,
+    )
+    consulting = calculate_priority(
+        _job(role_secondary_family="CONSULTING"),
+        profile,
+        now=NOW,
+    )
+    assert same.components["secondary_role_bonus"] is None
+    assert other.components["secondary_role_bonus"] is None
+    assert consulting.components["secondary_role_bonus"] == 100
+    assert consulting.components["primary_role_alignment"] == 100
+
+
+def test_role_evidence_changes_the_priority_hash(profile: Profile) -> None:
+    base = calculate_priority(_job(), profile, now=NOW)
+    primary = calculate_priority(
+        _job(role_evidence=["own the roadmap"]),
+        profile,
+        now=NOW,
+    )
+    secondary = calculate_priority(
+        _job(role_secondary_evidence=["client workstream"]),
+        profile,
+        now=NOW,
+    )
+    assert primary.input_hash != base.input_hash
+    assert secondary.input_hash != base.input_hash
+    assert primary.score == base.score
+    assert secondary.score == base.score
+
+
+def test_priority_does_not_call_a_model(profile: Profile, monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("priority must not call a model")
+
+    monkeypatch.setattr("scorer.fit.evaluate_fit", _boom)
+    monkeypatch.setattr("scorer.embeddings.build_embedder", _boom)
+    decision = calculate_priority(_job(), profile, now=NOW)
+    assert decision.version == PRIORITY_VERSION
+    assert decision.score == priority_mod.calculate_priority(_job(), profile, now=NOW).score

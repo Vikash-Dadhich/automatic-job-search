@@ -15,7 +15,7 @@ Fit stays the Phase 6 number on `Job.score`. Eligibility stays the Phase 9 state
 | Secondary role bonus | 3 | A small extra when the job itself performs a second target function. |
 | Eligibility | 16 | Phase 9 state. Clearly ineligible is 0. Unknown is 60, not 0. |
 | Role confidence | 6 | high 100, medium 70, low 50. Missing confidence is left out. |
-| JD evidence quality | 6 | Usable text is 80. A truncated or thin description is 40. Structured sections can raise a usable description toward 100. |
+| JD evidence quality | 6 | Usable text is 80. Structured sections can raise that toward 100. A truncated description is 40. A missing or suspicious description is left out. |
 | Program evidence | 7 | The strongest explicit internship, MBA, or U.S. program fact. |
 | Company domain relevance | 5 | One match between a factual company domain and the target families. |
 | Freshness | 6 | 100 today, down to 40 at 45 days, then 40. |
@@ -35,7 +35,7 @@ Primary alignment, before weighting:
 - Product marketing, marketing, and program or project operations: 45
 - OTHER, UNKNOWN, and a missing family: left out
 
-The secondary component is 100 when a second target family is present, and its weight is only 3. That is the whole bonus. A product role with a strategy secondary does not receive strategy's alignment score again. OTHER and UNKNOWN are never a secondary bonus. Portfolio weights are not this table. `role_family_component` still scales those portfolio weights and is not the priority alignment score.
+The secondary component is 100 when a second target family is present and different from the primary family. Its weight is only 3. The same family, OTHER, and UNKNOWN are left out. A product role with a strategy secondary does not receive strategy's alignment score again. Portfolio weights are not this table. `role_family_component` still scales those portfolio weights and is not the priority alignment score.
 
 ## Program and domain evidence
 
@@ -51,6 +51,6 @@ Freshness still uses `posted_at`, or `discovered_at` when posted time is missing
 
 ## Hash
 
-`phase12-v2` is stored with `priority_components`, `priority_reasons`, and `priority_input_hash`. The hash includes the weight table, the domain map, fit score and fit version, primary and secondary role fields, eligibility state and version, JD flags, the structured section states that affect evidence quality, the company signals that affect program or domain evidence, posted and discovered times, company name, status, the dream-company list, and `freshness_day`. Revenue, office count, and other unused company facts are not in the hash. Discovery labels and embeddings are not inputs.
+`phase12-v2` is stored with `priority_components`, `priority_reasons`, and `priority_input_hash`. The hash includes the weight table, the domain map, fit score and fit version, primary and secondary role fields including evidence, eligibility state and version, JD flags, the structured section states that affect evidence quality, the company signals that affect program or domain evidence, posted and discovered times, company name, status, the dream-company list, and `freshness_day`. Revenue, office count, and other unused company facts are not in the hash. Discovery labels and embeddings are not inputs.
 
 The same inputs on the same UTC day reuse the stored score. A later day, or a change to a hashed input, computes the score again. Fit, eligibility, role, and status are not cleared because priority was computed.
