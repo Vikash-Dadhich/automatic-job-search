@@ -16,9 +16,11 @@ from scorer.application_portfolio import (
     ALLOCATED,
     BLOCKED_COMPANY,
     DEFERRED,
+    _seat_targets,
     allocate_portfolio,
     allocated_jobs,
     apply_portfolio,
+    bucket_weights,
     load_portfolio_config,
     portfolio_config_hash,
 )
@@ -71,6 +73,20 @@ def test_portfolio_config_reuses_phase7_weights() -> None:
         cooldown_days=30,
         balance_margin=6,
     )
+    assert bucket_weights() == {
+        "PRODUCT_MANAGEMENT": 40,
+        "CONSULTING": 40,
+        "STRATEGY_TRANSFORMATION": 15,
+        "OTHER": 5,
+    }
+    seats = _seat_targets(10, bucket_weights())
+    assert seats == {
+        "PRODUCT_MANAGEMENT": 4,
+        "CONSULTING": 4,
+        "STRATEGY_TRANSFORMATION": 1,
+        "OTHER": 1,
+    }
+    assert sum(seats.values()) == 10
 
 
 def test_config_rejects_a_bool_cap(tmp_path: Path) -> None:
@@ -84,6 +100,50 @@ def test_config_rejects_a_bool_cap(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError):
         load_portfolio_config(str(path))
+
+
+def test_blank_companies_do_not_share_a_cap() -> None:
+    jobs = [
+        _job("blank-a", id=1, company="", priority_score=90),
+        _job("blank-b", id=2, company=" ", priority_score=80),
+    ]
+    decisions = allocate_portfolio(
+        jobs,
+        cooldown_companies=set(),
+        capacity=2,
+        max_per_company=1,
+    )
+    chosen = [item.job.external_id for item in decisions if item.decision == ALLOCATED]
+    assert chosen == ["blank-a", "blank-b"]
+
+
+def test_unknown_eligibility_can_still_be_allocated() -> None:
+    job = _job("unknown", id=1, eligibility_state="UNKNOWN", priority_score=10, score=1)
+    decisions = allocate_portfolio(
+        [job],
+        cooldown_companies=set(),
+        capacity=1,
+        max_per_company=2,
+    )
+    assert decisions[0].decision == ALLOCATED
+    assert job.eligibility_state == "UNKNOWN"
+    assert job.score == 1
+
+
+def test_allocation_does_not_rescore(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("portfolio must not score")
+
+    monkeypatch.setattr("scorer.priority.calculate_priority", _boom)
+    monkeypatch.setattr("scorer.fit.evaluate_fit", _boom)
+    monkeypatch.setattr("scorer.embeddings.build_embedder", _boom)
+    decisions = allocate_portfolio(
+        [_job("ready", id=1, priority_score=15, score=4)],
+        cooldown_companies=set(),
+        capacity=1,
+        max_per_company=2,
+    )
+    assert decisions[0].decision == ALLOCATED
 
 
 def test_daily_capacity_defers_the_rest() -> None:
