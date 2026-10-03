@@ -304,6 +304,34 @@ async def test_cache_reuses_and_invalidates(db_ready: Path, profile: Profile) ->
     assert before != after
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("role_secondary_family", "CONSULTING"),
+        ("role_secondary_subfamily", "STRATEGY_CONSULTING"),
+        ("role_secondary_confidence", "high"),
+        ("role_secondary_evidence", ["lead the client workstream"]),
+    ],
+)
+def test_secondary_role_fields_change_the_input_hash(
+    profile: Profile,
+    field: str,
+    value: object,
+) -> None:
+    kwargs = {
+        "structured_hash": None,
+        "structured_version": None,
+        "company_hash": None,
+        "company_version": None,
+    }
+    original = _job()
+    edited = _job()
+    setattr(edited, field, value)
+    baseline = career_input_hash(original, profile, **kwargs)
+    changed = career_input_hash(edited, profile, **kwargs)
+    assert baseline != changed
+
+
 async def test_role_and_company_inputs_change_the_hash(db_ready: Path, profile: Profile) -> None:
     del db_ready
     job_id = await _save(_job())

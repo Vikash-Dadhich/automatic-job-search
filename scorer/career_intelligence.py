@@ -458,6 +458,9 @@ def career_input_hash(
         "role_classifier_version": job.role_classifier_version,
         "role_evidence": job.role_evidence,
         "role_secondary_family": job.role_secondary_family,
+        "role_secondary_subfamily": job.role_secondary_subfamily,
+        "role_secondary_confidence": job.role_secondary_confidence,
+        "role_secondary_evidence": job.role_secondary_evidence,
         "company_hash": company_hash,
         "company_version": company_version,
     }
