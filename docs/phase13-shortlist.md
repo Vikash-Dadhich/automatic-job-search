@@ -2,7 +2,7 @@
 
 The shortlist decides which staged jobs enter the human review queue. It does not score them again and it does not remove the ones it skips.
 
-Priority 2.0 `priority_score` is the order. Shortlist does not calculate it again. `sort_by_priority` breaks ties by fit, then posted or discovered time, then job id. A staged job with no priority score is left staged and is not given a substitute score. A missing fit sorts after a fit of 0. `bot.prep.select_shortlist` is a separate Telegram prep list and does not define this queue.
+Priority 2.0 `priority_score` is the order. Shortlist does not calculate it again. `sort_by_priority` breaks ties by fit, then posted or discovered time, then job id. A staged job with no priority score is left staged and is not given a substitute score. A missing fit sorts after a fit of 0. Telegram reads this persisted result and does not choose its own list. `bot.prep.select_shortlist` is a legacy score-fill helper and is not the production shortlist.
 
 ## Configuration
 
@@ -38,6 +38,6 @@ The run order is ingest, score, shortlist, resume, suggestions, benchmark, prep,
 - Shortlist reads `staged` and returns the ids it moved to `pending_review`.
 - Resume preparation on that run attaches a resume to `pending_review` jobs. A direct `prepare_pending()` call still uses `staged`.
 - Skill suggestions and Tier-1 benchmarking use those shortlist ids. They do not scan every staged job, and they do not scan the whole review queue from earlier runs.
-- The prep file still uses the ids scoring just produced. That loader does not filter on status, so a job scored in the same run remains eligible for the file after the shortlist moves it.
+- The Telegram file reads jobs that already have `shortlist_rank`, in that order. It does not score them again, fill the file to a count, or add a job that this shortlist did not select. An empty selection sends a notice and no job cards.
 - Workday pre-fill still reads `staged`. A job in `pending_review` is not an application candidate. Shortlist does not start an application.
 - Telegram review reads `pending_review`. Approve, discard, and submit are unchanged.

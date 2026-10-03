@@ -114,9 +114,11 @@ async def test_send_prep_pack_marks_jobs(
                 location="Remote",
                 url="https://example.com/1",
                 description_clean="PM role requiring product strategy.",
-                status=Status.staged,
+                status=Status.pending_review,
                 score=90,
                 tier=Tier.one,
+                shortlist_rank=1,
+                shortlist_version="phase13-v2",
             ),
         )
         job_id = job.id
@@ -181,4 +183,6 @@ async def test_send_prep_pack_empty(db_ready: Path) -> None:
     )
     assert summary.jobs == 0
     assert summary.skipped == 1
-    assert transport.calls == []
+    assert transport.calls
+    assert transport.calls[0]["method"] == "sendMessage"
+    assert "No jobs are currently selected for review." in transport.calls[0]["payload"]["text"]

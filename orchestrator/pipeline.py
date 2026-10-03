@@ -241,11 +241,8 @@ async def _run_opened_pipeline(
     do_benchmark: bool,
 ) -> PipelineSummary:
     async def _prep_stage() -> Any:
-        # Prep already loads these ids without a status filter, so a job that
-        # scoring just wrote and shortlist then moved is still included.
-        scoring = summary.stages.get("scoring")
-        raw_ids = getattr(scoring, "scored_ids", []) or []
-        return await _send_prep_pack(job_ids=list(raw_ids))
+        # The persisted shortlist is the membership. Scoring ids are not a second selector.
+        return await _send_prep_pack()
 
     async def _suggest_stage() -> dict[str, int]:
         return await _generate_suggestions_stage(_selected_ids(summary))

@@ -52,10 +52,10 @@ def test_shortlist_fills_to_20_from_60() -> None:
     assert [job.score for job in chosen[:5]] == [90, 89, 88, 87, 86]
     assert [job.score for job in chosen[5:]] == [75] * 10 + [70] * 5
     text = render_shortlist(chosen)
-    assert text.split("\n\n")[0].startswith("1. 90  Role")
-    assert "[fill]" in text.split("\n\n")[5]
+    assert text.startswith("1. Role 0")
+    assert "Fit: 90" in text
+    assert "[fill]" not in text
     assert "59" not in text
-    assert all("[fill]" not in block for block in text.split("\n\n")[:5])
 
 
 def test_shortlist_leaves_slots_empty_under_60() -> None:
@@ -102,6 +102,13 @@ async def test_shortlist_document_marks_sent(
     monkeypatch.setenv("PREP_PACK_BRIEF", "true")
     get_settings.cache_clear()
     ids = await _seed([92, 70, 59])
+    async with session_scope() as session:
+        for job_id, rank in ((ids[0], 1), (ids[1], 2)):
+            target = await get_job_by_id(session, job_id)
+            assert target is not None
+            target.shortlist_rank = rank
+            target.shortlist_version = "phase13-v2"
+            session.add(target)
 
     transport = FakeTransport()
     client = TelegramClient(transport=transport, chat_id="999")
@@ -110,12 +117,13 @@ async def test_shortlist_document_marks_sent(
     assert summary.sent == 1
     assert summary.jobs == 2
     assert transport.calls[0]["method"] == "sendDocument"
-    assert transport.calls[0]["payload"]["caption"] == "2 leads, 1 above 75"
+    assert transport.calls[0]["payload"]["caption"] == "2 jobs selected for review"
     assert summary.markdown_path is not None
     text = Path(summary.markdown_path).read_text(encoding="utf-8")
-    assert "92" in text
-    assert "[fill]" in text
+    assert "Fit: 92" in text
+    assert "Fit: 70" in text
     assert "59" not in text
+    assert "[fill]" not in text
 
     async with session_scope() as session:
         strong = await get_job_by_id(session, ids[0])

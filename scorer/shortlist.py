@@ -1,7 +1,7 @@
 """Choose which staged jobs enter review. This does not score or discard a job.
 
-Pipeline selection lives here. ``bot.prep.select_shortlist`` is a separate
-Telegram prep list and does not define this queue.
+Pipeline selection lives here. Telegram reads the persisted ranks and does
+not choose a second list. ``bot.prep.select_shortlist`` is a legacy helper.
 """
 
 from __future__ import annotations

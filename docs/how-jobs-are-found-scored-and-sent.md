@@ -447,41 +447,45 @@ Title match is an explicit check. A consulting internship can still score low wh
 
 ## 6. What is sent to you
 
-Brief mode is on. You get one Telegram document per run, a `.txt` file, caption like `12 leads, 9 above 75`.
+Brief mode is on. You get one Telegram document per run, a `.txt` file. The caption is the number of jobs in that file, such as `3 jobs selected for review`.
+
+`scorer.shortlist` is the only production shortlist. Telegram presents that result. It does not score, rank, or fill the file. `bot.prep.select_shortlist` is an old score-fill helper and is not used for this send.
 
 ### 6.1 Who is eligible
 
-Jobs from this run's scoring pass that have a numeric score and have not already been sent (`prep_pack_sent_at` is empty). The query that backs a manual prep-pack send also allows status `staged` or `filtered_out`. The pipeline path passes the ids that scoring just touched.
+Jobs that already have `shortlist_rank` and have not already been sent (`prep_pack_sent_at` is empty). The file uses that rank order. A high fit score does not add a job that the shortlist left out. A job the shortlist did select is included even when its fit is below the old 75 and 60 cutoffs.
 
-Tier 3 jobs have scores under 65. They can sit in the pool. The shortlist rule below still excludes anything under 60, and a Tier 3 score is under 65, so a 64 can be included as fill and a 50 cannot.
+If nothing has `shortlist_rank`, Telegram sends one notice: no jobs are currently selected for review. It does not add other jobs to make the file look full. Three selected jobs produce three cards.
 
 ### 6.2 The shortlist rule
 
-`select_shortlist` in `bot/prep.py`:
-
-1. Take every unsent job with score **above 75**. Sort by score, highest first.
-2. If that set already has 20 or more, send all of them. There is no cap once you are above 75. A day with 30 jobs at 76 or higher sends all 30.
-3. If fewer than 20 are above 75, fill from jobs with score **from 60 through 75**, highest first, until the file has 20.
-4. Anything **under 60** is left out.
-5. Fill rows are marked `[fill]` so a 70 is not read as a 90.
-
-Order inside the file is fit score only. Family is not a section. A 92 customer-success intern is above an 88 product-management intern.
+Selection is Phase 13 Shortlist 2.0, documented in `docs/phase13-shortlist.md`. This send does not apply a fit threshold, a company cap, or a diversity rule of its own.
 
 ### 6.3 Each line
 
 ```text
-1. 91  Product Manager Intern @ Stripe
-    Seattle, WA
-    https://...
+1. Product Manager Intern
+   Stripe
+   Seattle, WA
 
-2. 70  [fill]  Strategy Intern @ Some Co
-    Remote
-    https://...
+   Fit: 91
+   Priority: 84
+   Eligibility: UNKNOWN
+   Role: PRODUCT_MANAGEMENT
+   Confidence: high
+
+   Why it fits:
+   • Product ownership
+
+   Visa: UNKNOWN
+
+   Source: linkedin
+
+   Apply:
+   https://...
 ```
 
-Fields: rank, score, optional `[fill]`, title, company, location, URL.
-
-Not included: visa friendly/unknown, tier name, source site, the model's reasons, family, or the pre-score rank.
+A line is omitted when that stored field is missing. Fit is the stored score. Priority is the stored `priority_score`, not a new band. Eligibility and visa are the stored states. UNKNOWN stays UNKNOWN. Role and confidence are the stored classification. Source is the stored source value. The apply link is the stored URL. "Why it fits" is stored fit evidence, or the stored score reasons when evidence is absent. Nothing in the card is written by a new model call.
 
 After a successful send, `prep_pack_sent_at` is set. The next run does not send those rows again unless the job is rewound.
 
@@ -502,7 +506,7 @@ fetched
        -> filtered_out     embedding cosine < 0.50 and recovery declined
        -> filtered_out     fit score < 65 (Tier 3)
        -> staged           fit score >= 65 (Tier 2) or >= 85 (Tier 1)
-            -> Telegram    score > 75, or score >= 60 while the file has under 20
+            -> Telegram    shortlist selected it (shortlist_rank set)
 ```
 
 `scored` exists as a status in the database enum. The live tier mapping writes `staged` or `filtered_out` directly.

@@ -218,8 +218,8 @@ class Settings(BaseSettings):
     prep_pack_brief: bool = Field(
         default=False,
         description=(
-            "When true, send a compact Telegram text message (title, location, score, "
-            "source, URL) instead of a full PDF+Markdown prep pack. "
+            "When true, send the persisted shortlist as one text file. "
+            "Telegram does not choose or fill that list. "
             "No LLM calls are made in brief mode. Set full mode when you need drafted answers."
         ),
     )

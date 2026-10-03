@@ -13,9 +13,7 @@ from config.profile import Profile, load_profile
 from config.settings import get_settings
 from core.db import (
     Job,
-    Status,
     get_job_by_id,
-    get_unsent_prep_pack_jobs,
     init_db,
     session_scope,
 )
@@ -30,7 +28,11 @@ SHORTLIST_FLOOR_COUNT = 20
 
 
 def select_shortlist(jobs: list[Job]) -> list[Job]:
-    """All scores above 75. If that is under 20, fill from scores of at least 60."""
+    """Legacy score fill. Production Telegram does not call this.
+
+    The canonical shortlist is ``scorer.shortlist``. This helper remains for
+    older tests only.
+    """
     eligible = [
         job for job in jobs if job.score is not None and job.prep_pack_sent_at is None
     ]
@@ -52,23 +54,92 @@ def select_shortlist(jobs: list[Job]) -> list[Job]:
     return strong + fill[:need]
 
 
+EMPTY_SHORTLIST_MESSAGE = "No jobs are currently selected for review."
+
+
+def _fit_lines(job: Job) -> list[str]:
+    raw = job.fit_evidence if job.fit_evidence else job.justification
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _visa_state(job: Job) -> str | None:
+    dimensions = job.eligibility_dimensions
+    if not isinstance(dimensions, dict):
+        return None
+    visa = dimensions.get("VISA_SPONSORSHIP")
+    if not isinstance(visa, dict):
+        return None
+    state = visa.get("state")
+    if not isinstance(state, str) or not state.strip():
+        return None
+    return state.strip()
+
+
+def _dedupe(jobs: list[Job]) -> list[Job]:
+    seen: set[int] = set()
+    unique: list[Job] = []
+    for job in jobs:
+        if job.id is None or job.id in seen:
+            continue
+        seen.add(job.id)
+        unique.append(job)
+    return unique
+
+
+def render_job_card(index: int, job: Job) -> str:
+    """One factual card. Missing fields are omitted. Nothing is inferred."""
+    lines = [f"{index}. {job.title}", f"   {job.company}"]
+    if job.location:
+        lines.append(f"   {job.location}")
+    lines.append("")
+    if job.score is not None:
+        lines.append(f"   Fit: {job.score}")
+    if job.priority_score is not None:
+        lines.append(f"   Priority: {job.priority_score}")
+    if job.eligibility_state:
+        lines.append(f"   Eligibility: {job.eligibility_state}")
+    if job.role_family:
+        lines.append(f"   Role: {job.role_family}")
+    if job.role_secondary_family:
+        lines.append(f"   Secondary role: {job.role_secondary_family}")
+    if job.role_confidence:
+        lines.append(f"   Confidence: {job.role_confidence}")
+    reasons = _fit_lines(job)
+    if reasons:
+        lines.append("")
+        lines.append("   Why it fits:")
+        for reason in reasons:
+            lines.append(f"   • {reason}")
+    visa = _visa_state(job)
+    if visa:
+        lines.append("")
+        lines.append(f"   Visa: {visa}")
+    if job.source is not None:
+        lines.append("")
+        lines.append(f"   Source: {job.source.value}")
+    if job.url:
+        lines.append("")
+        lines.append("   Apply:")
+        lines.append(f"   {job.url}")
+    return "\n".join(lines)
+
+
 def render_shortlist(jobs: list[Job]) -> str:
-    """Plain-text shortlist. Fill-band rows are marked so a 70 is not read as a 90."""
-    lines: list[str] = []
-    for index, job in enumerate(jobs, 1):
-        score = int(job.score or 0)
-        band = "" if score > STRONG_SCORE else "  [fill]"
-        lines.append(
-            f"{index}. {score}{band}  {job.title} @ {job.company}\n"
-            f"    {job.location or 'N/A'}\n"
-            f"    {job.url}"
-        )
-    return "\n\n".join(lines)
+    """Cards in the order given. Duplicate ids are shown once."""
+    cards = [
+        render_job_card(index, job)
+        for index, job in enumerate(_dedupe(jobs), start=1)
+    ]
+    return "\n\n".join(cards)
 
 
 def shortlist_caption(jobs: list[Job]) -> str:
-    strong = sum(1 for job in jobs if (job.score or 0) > STRONG_SCORE)
-    return f"{len(jobs)} leads, {strong} above 75"
+    count = len(_dedupe(jobs))
+    if count == 1:
+        return "1 job selected for review"
+    return f"{count} jobs selected for review"
 
 
 @dataclass
@@ -80,28 +151,6 @@ class PrepSummary:
     error_details: list[str] = field(default_factory=list)
     markdown_path: str | None = None
     pdf_path: str | None = None
-
-
-async def _load_scored(job_ids: list[int]) -> list[Job]:
-    found: list[Job] = []
-    async with session_scope() as session:
-        for job_id in job_ids:
-            job = await get_job_by_id(session, job_id)
-            if job is not None:
-                found.append(job)
-    return found
-
-
-async def _unsent_scored_jobs() -> list[Job]:
-    async with session_scope() as session:
-        result = await session.exec(
-            select(Job).where(
-                col(Job.score).is_not(None),  # type: ignore[union-attr]
-                col(Job.prep_pack_sent_at).is_(None),  # type: ignore[union-attr]
-                col(Job.status).in_([Status.staged, Status.filtered_out]),  # type: ignore[union-attr]
-            )
-        )
-        return list(result.all())
 
 
 async def _mark_sent(jobs: list[Job], now: datetime) -> None:
@@ -153,9 +202,32 @@ async def _send_shortlist_document(
         "send_prep_pack_complete",
         mode="shortlist",
         jobs=summary.jobs,
-        above_75=sum(1 for job in jobs if (job.score or 0) > STRONG_SCORE),
         path=str(path),
     )
+    return summary
+
+
+async def _load_canonical_shortlist() -> list[Job]:
+    """Persisted shortlist rows, in shortlist order. Does not select jobs."""
+    async with session_scope() as session:
+        result = await session.exec(
+            select(Job)
+            .where(col(Job.shortlist_rank).is_not(None))  # type: ignore[union-attr]
+            .order_by(col(Job.shortlist_rank), col(Job.id))
+        )
+        return _dedupe(list(result.all()))
+
+
+async def _notify_empty(client: TelegramClient, summary: PrepSummary) -> PrepSummary:
+    summary.skipped = 1
+    try:
+        await client.send_message(EMPTY_SHORTLIST_MESSAGE)
+    except Exception as exc:
+        log.warning("prep_pack_send_failed", error=str(exc))
+        summary.errors += 1
+        summary.error_details.append(f"telegram: {exc}")
+        return summary
+    log.info("send_prep_pack_empty")
     return summary
 
 
@@ -167,37 +239,33 @@ async def send_prep_pack(
     limit: int | None = None,
     job_ids: list[int] | None = None,
 ) -> PrepSummary:
-    """Build and send a prep pack for unsent staged LinkedIn/Indeed jobs.
+    """Deliver the persisted shortlist. This function does not choose jobs.
 
-    Brief mode sends one shortlist text file: every score above 75, then
-    scores of at least 60 until the file has 20. Nothing under 60 is included.
+    Membership is ``shortlist_rank`` from ``scorer.shortlist``. Brief mode
+    sends one text file of those unsent rows, in that order. An empty
+    shortlist sends a notice and does not fill from other scores.
 
-    Full mode (PREP_PACK_BRIEF=false): LLM-drafted answers + Typst PDF + Markdown.
+    Full mode (PREP_PACK_BRIEF=false) drafts answers only for that same set.
 
-    ``limit`` defaults to ``settings.prep_pack_limit`` (20).
+    ``job_ids`` and ``limit`` do not add or drop shortlist members.
     """
+    del job_ids, limit
     await init_db()
     client = client or TelegramClient()
     profile = profile or load_profile()
     summary = PrepSummary()
 
     settings = get_settings()
-    if settings.prep_pack_brief:
-        if job_ids is not None:
-            pool = await _load_scored(job_ids)
-        else:
-            pool = await _unsent_scored_jobs()
-        return await _send_shortlist_document(select_shortlist(pool), client)
-
-    effective_limit = limit if limit is not None else settings.prep_pack_limit
-
-    async with session_scope() as session:
-        jobs = await get_unsent_prep_pack_jobs(session, limit=effective_limit)
-
+    shortlist = await _load_canonical_shortlist()
+    jobs = [job for job in shortlist if job.prep_pack_sent_at is None]
+    if not shortlist:
+        return await _notify_empty(client, summary)
     if not jobs:
-        log.info("send_prep_pack_empty")
+        log.info("send_prep_pack_already_sent")
         summary.skipped = 1
         return summary
+    if settings.prep_pack_brief:
+        return await _send_shortlist_document(jobs, client)
 
     # --- Full mode: LLM essay drafting + Typst PDF --------------------------
     try:
