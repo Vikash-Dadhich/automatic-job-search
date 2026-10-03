@@ -7,11 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlmodel import select
 
 from automation.runner import apply_pending
 from automation.workday import ApplyResult
 from config.settings import get_settings
 from core.db import (
+    Application,
     Job,
     Source,
     Status,
@@ -96,6 +98,46 @@ def test_shortlist_config_loads_and_rejects_invalid(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError):
         load_shortlist_config(str(flagged))
+    for body in (
+        "version: phase13-v2\nshortlist:\n  max_size: 20\n  max_per_company: 2\n"
+        "  diversity_margin: 5\nrole_diversity:\n  enabled: maybe\n"
+        "  target_families: [PRODUCT_MANAGEMENT]\n",
+        "version: phase13-v2\nshortlist:\n  max_size: 20\n  max_per_company: 2\n"
+        "  diversity_margin: 5\nrole_diversity:\n  enabled: true\n  target_families: []\n",
+        "version: phase13-v2\nshortlist:\n  max_size: 20\n  max_per_company: 2\n"
+        "  diversity_margin: 5\nrole_diversity:\n  enabled: true\n"
+        "  target_families: [UNKNOWN, PRODUCT_MANAGEMENT]\n",
+        "version: phase13-v2\nshortlist:\n  max_size: 20\n  max_per_company: 2\n"
+        "  diversity_margin: 5\nrole_diversity:\n  enabled: true\n  target_families: [OTHER]\n",
+    ):
+        path = tmp_path / "bad-diversity.yaml"
+        path.write_text(body)
+        with pytest.raises(ValueError):
+            load_shortlist_config(str(path))
+
+
+def test_low_priority_still_takes_an_open_seat() -> None:
+    picks = select_shortlist(
+        [_job("thin", priority_score=1, score=1, id=1)],
+        config=_config(),
+    )
+    assert [pick.rank for pick in picks] == [1]
+    assert picks[0].reason == SELECTED_BY_PRIORITY
+    assert picks[0].job.status == Status.staged
+    assert picks[0].job.score == 1
+
+
+def test_selection_does_not_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("shortlist must not score")
+
+    monkeypatch.setattr("scorer.priority.calculate_priority", _boom)
+    monkeypatch.setattr("scorer.fit.evaluate_fit", _boom)
+    monkeypatch.setattr("scorer.embeddings.build_embedder", _boom)
+    picks = select_shortlist([_job("ready", priority_score=12, score=4, id=1)], config=_config())
+    assert [pick.job.external_id for pick in picks] == ["ready"]
 
 
 def test_priority_order_and_phase12_ties() -> None:
@@ -394,6 +436,10 @@ async def test_apply_shortlist_is_idempotent_and_preserves_scores(db_ready: Path
         assert added.status == Status.pending_review
         assert added.shortlist_config_hash == third.config_hash
         assert added.priority_score == 80
+        assert added.portfolio_decision is None
+        selected = {saved["keep-0"], saved["keep-1"], saved["keep-2"], saved["keep-3"]}
+        rows = (await session.exec(select(Application))).all()
+        assert all(row.job_id not in selected for row in rows)
 
 
 class _SpyApplicator:

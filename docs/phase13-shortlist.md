@@ -8,7 +8,7 @@ Priority 2.0 `priority_score` is the order. Shortlist does not calculate it agai
 
 `config/shortlist.yaml`, version `phase13-v2`:
 
-- `max_size` is 20. This is the size of the pending-review queue, not a score cutoff.
+- `max_size` is 20. This is the size of the pending-review queue, not a score cutoff. A low fit or a low stored priority still takes an open seat.
 - `max_per_company` is 2. Legal suffixes are ignored through the existing company-token helper, so "Acme, Inc." and "Acme LLC" share a cap. "Meta" and "MetLife" do not. A blank company name is not grouped with other blank names.
 - `diversity_margin` is 5. A different target family can take a crowded seat only when its priority is within 5 points. A larger gap keeps the higher-priority job.
 - `role_diversity.target_families` lists the families that may take that seat: product management, consulting, strategy and transformation, product marketing, marketing, and program or project operations. UNKNOWN and OTHER are not targets. The primary `role_family` is the seat. A secondary family does not count as its own family.
