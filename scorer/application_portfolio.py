@@ -27,7 +27,7 @@ from core.textmatch import company_matches, company_tokens
 from scorer.priority import sort_by_priority
 from scorer.role_weights import get_role_family_weight
 
-PORTFOLIO_VERSION = "phase14-v1"
+PORTFOLIO_VERSION = "phase14-v2"
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "application_portfolio.yaml"
 ALLOCATED = "ALLOCATED"
 DEFERRED = "DEFERRED"
@@ -69,8 +69,11 @@ def _validate(raw: object) -> dict[str, Any]:
     block = raw.get("portfolio")
     if not isinstance(block, dict):
         raise ValueError("portfolio config must contain a portfolio mapping")
-    if set(block) != {"enabled", "max_applications_per_company"}:
-        raise ValueError("portfolio config must set enabled and max_applications_per_company")
+    expected = {"enabled", "max_applications_per_company", "balance_margin"}
+    if set(block) != expected:
+        raise ValueError(
+            "portfolio config must set enabled, max_applications_per_company, and balance_margin"
+        )
     enabled = block.get("enabled")
     if not isinstance(enabled, bool):
         raise ValueError("portfolio.enabled must be true or false")
@@ -80,9 +83,14 @@ def _validate(raw: object) -> dict[str, Any]:
         lower=1,
         upper=100,
     )
+    margin = _require_int("balance_margin", block["balance_margin"], lower=0, upper=100)
     return {
         "version": PORTFOLIO_VERSION,
-        "portfolio": {"enabled": enabled, "max_applications_per_company": cap},
+        "portfolio": {
+            "enabled": enabled,
+            "max_applications_per_company": cap,
+            "balance_margin": margin,
+        },
     }
 
 
@@ -109,12 +117,14 @@ def portfolio_config_hash(
     max_per_company: int,
     capacity: int,
     cooldown_days: int,
+    balance_margin: int,
 ) -> str:
     payload = {
         "version": PORTFOLIO_VERSION,
         "max_applications_per_company": max_per_company,
         "capacity": capacity,
         "cooldown_days": cooldown_days,
+        "balance_margin": balance_margin,
         "weights": bucket_weights(),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -167,6 +177,7 @@ def allocate_portfolio(
     cooldown_companies: set[str],
     capacity: int,
     max_per_company: int,
+    balance_margin: int = 5,
 ) -> list[PortfolioDecision]:
     """Choose staged candidates. Does not write status, fit, or priority."""
     weights = bucket_weights()
@@ -174,12 +185,18 @@ def allocate_portfolio(
     ordered = sort_by_priority(candidates)
     cooled = [job for job in ordered if _on_cooldown(job, cooldown_companies)]
     cooled_ids = {id(job) for job in cooled}
-    open_jobs = [job for job in ordered if id(job) not in cooled_ids]
+    available = [job for job in ordered if id(job) not in cooled_ids]
+    missing = [job for job in available if job.priority_score is None]
+    open_jobs = [job for job in available if job.priority_score is not None]
     if capacity <= 0:
         blocked = [
             PortfolioDecision(job=job, decision=BLOCKED_CAPACITY, reason="blocked_capacity")
             for job in open_jobs
         ]
+        blocked.extend(
+            PortfolioDecision(job=job, decision=DEFERRED, reason="deferred_missing_priority")
+            for job in missing
+        )
         blocked.extend(
             PortfolioDecision(job=job, decision=BLOCKED_COMPANY, reason="blocked_company_cooldown")
             for job in cooled
@@ -187,10 +204,8 @@ def allocate_portfolio(
         return blocked
 
     targets = _seat_targets(capacity, weights)
-    by_bucket: dict[str, list[Job]] = {name: [] for name in _BUCKETS}
-    for job in open_jobs:
-        by_bucket[_bucket(job)].append(job)
     counts: dict[tuple[str, ...], int] = {}
+    filled = {name: 0 for name in _BUCKETS}
     chosen: list[tuple[Job, str]] = []
     chosen_ids: set[int] = set()
 
@@ -206,26 +221,31 @@ def allocate_portfolio(
     def take(job: Job, reason: str) -> None:
         chosen.append((job, reason))
         chosen_ids.add(identity(job))
+        filled[_bucket(job)] += 1
         key = _company_key(job)
         if key is not None:
             counts[key] = counts.get(key, 0) + 1
 
-    bucket_order = sorted(_BUCKETS, key=lambda name: (-targets[name], -weights[name], name))
-    for name in bucket_order:
-        for job in by_bucket[name]:
-            if len(chosen) >= capacity or targets[name] <= 0:
-                break
-            if sum(1 for item, _reason in chosen if _bucket(item) == name) >= targets[name]:
-                break
-            if not can_take(job):
-                continue
-            take(job, "allocated_for_role_family_target")
-    for job in open_jobs:
-        if len(chosen) >= capacity:
+    while len(chosen) < capacity:
+        waiting = [job for job in open_jobs if identity(job) not in chosen_ids and can_take(job)]
+        if not waiting:
             break
-        if identity(job) in chosen_ids or not can_take(job):
-            continue
-        take(job, "allocated_by_priority")
+        best = waiting[0]
+        pick = best
+        reason = "allocated_by_priority"
+        best_score = best.priority_score or 0
+        if filled[_bucket(best)] >= targets[_bucket(best)]:
+            floor = best_score - balance_margin
+            for candidate in waiting[1:]:
+                score = candidate.priority_score
+                if score is None or score < floor:
+                    break
+                if filled[_bucket(candidate)] >= targets[_bucket(candidate)]:
+                    continue
+                pick = candidate
+                reason = "allocated_for_role_family_target"
+                break
+        take(pick, reason)
 
     decisions = [
         PortfolioDecision(job=job, decision=ALLOCATED, reason=reason) for job, reason in chosen
@@ -246,6 +266,10 @@ def allocate_portfolio(
                     reason="blocked_company_concentration",
                 )
             )
+    decisions.extend(
+        PortfolioDecision(job=job, decision=DEFERRED, reason="deferred_missing_priority")
+        for job in missing
+    )
     decisions.extend(
         PortfolioDecision(job=job, decision=BLOCKED_COMPANY, reason="blocked_company_cooldown")
         for job in cooled
@@ -269,10 +293,12 @@ async def apply_portfolio(*, config: dict[str, Any] | None = None) -> PortfolioS
     capacity = settings.apply_limit
     window = settings.company_cooldown_days
     per_company = int(loaded["portfolio"]["max_applications_per_company"])
+    margin = int(loaded["portfolio"]["balance_margin"])
     digest = portfolio_config_hash(
         max_per_company=per_company,
         capacity=capacity,
         cooldown_days=window,
+        balance_margin=margin,
     )
     async with session_scope() as session:
         staged = await get_jobs_by_status(session, Status.staged)
@@ -283,18 +309,36 @@ async def apply_portfolio(*, config: dict[str, Any] | None = None) -> PortfolioS
         cooldown_companies=cooldown,
         capacity=capacity,
         max_per_company=per_company,
+        balance_margin=margin,
     )
     now = datetime.now(UTC)
+    persisted = 0
+    company_counts: dict[tuple[str, ...], int] = {}
     for item in decisions:
         if item.job.id is None:
             continue
         async with session_scope() as session:
             target = await get_job_by_id(session, item.job.id)
-            if target is None or target.status != Status.staged:
+            if target is None or target.status != Status.staged or not _eligible(target):
                 continue
+            if target.eligibility_state == "CLEARLY_INELIGIBLE":
+                continue
+            decision = item.decision
+            reason = item.reason
+            if decision == ALLOCATED:
+                if target.priority_score is None or persisted >= capacity:
+                    continue
+                key = _company_key(target)
+                if key is not None and company_counts.get(key, 0) >= per_company:
+                    decision = BLOCKED_COMPANY
+                    reason = "blocked_company_concentration"
+                else:
+                    persisted += 1
+                    if key is not None:
+                        company_counts[key] = company_counts.get(key, 0) + 1
             target.portfolio_version = PORTFOLIO_VERSION
-            target.portfolio_decision = item.decision
-            target.portfolio_reason = item.reason
+            target.portfolio_decision = decision
+            target.portfolio_reason = reason
             target.portfolio_config_hash = digest
             target.updated_at = now
             session.add(target)

@@ -8,7 +8,7 @@ It does not compute a new score. It does not change fit, tier, priority, eligibi
 
 `Settings.apply_limit` is the cap (default 10). That is the most jobs one run may allocate. It does not require 10 applications. `Settings.company_cooldown_days` is the window (default 30). Phase 14 does not keep a second copy of either number.
 
-`config/application_portfolio.yaml` only adds whether the layer is on and how many jobs from one company this run may allocate (`max_applications_per_company`, default 2).
+`config/application_portfolio.yaml`, version `phase14-v2`, sets whether the layer is on, how many jobs from one company this run may allocate (`max_applications_per_company`, default 2), and `balance_margin` (default 5). The margin is how far below the next priority-ordered job a different role family may sit and still take that seat because its target share is still open. A wider gap keeps the higher-priority job. The 40/40/15/5 shares are not quotas.
 
 ## Who can be allocated
 
@@ -26,7 +26,9 @@ Buckets use the Phase 7 weights: Product Management 40, Consulting 40, Strategy/
 
 Seats are the largest whole number that fits each share. Any leftover seat goes to the bucket with the largest remainder. If two remainders tie, the bucket that currently has fewer seats gets it. For 10 seats that is 4, 4, 1, and 1.
 
-The allocator fills those seats from each bucket in Phase 12 order, then gives any unused seats to the highest-priority jobs still eligible. A bucket with too few jobs does not leave seats empty. A bucket with extra jobs is not rejected; the extras are deferred and can be chosen on a later run. Nothing is multiplied by the weight.
+The allocator walks jobs in stored priority order. It does not calculate priority again. A job with no `priority_score` is deferred and stays staged. The primary role family is the bucket. A secondary family does not take a second seat.
+
+While a bucket is still under its share, its own highest-priority jobs are taken normally. Once a bucket has reached its share, a job from a bucket that is still open can take the next seat only when its priority is within `balance_margin` of the job that would otherwise be next, and only when the company cap still holds. A larger gap keeps the higher-priority job. Seats that a bucket cannot fill, or will not fill because the gap is too wide, go to the highest-priority jobs that remain. A bucket with extra jobs is not rejected. Those jobs stay staged and can be chosen on a later run. Nothing is multiplied by the weight.
 
 ## Decisions
 

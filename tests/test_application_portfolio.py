@@ -20,6 +20,7 @@ from scorer.application_portfolio import (
     allocated_jobs,
     apply_portfolio,
     load_portfolio_config,
+    portfolio_config_hash,
 )
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=UTC)
@@ -48,15 +49,38 @@ def _job(external_id: str, **kwargs: object) -> Job:
 
 def test_portfolio_config_reuses_phase7_weights() -> None:
     loaded = load_portfolio_config()
-    assert loaded["version"] == "phase14-v1"
+    assert loaded["version"] == "phase14-v2"
     assert loaded["portfolio"]["enabled"] is True
     assert loaded["portfolio"]["max_applications_per_company"] == 2
+    assert loaded["portfolio"]["balance_margin"] == 5
+    first = portfolio_config_hash(
+        max_per_company=2,
+        capacity=10,
+        cooldown_days=30,
+        balance_margin=5,
+    )
+    assert first == portfolio_config_hash(
+        max_per_company=2,
+        capacity=10,
+        cooldown_days=30,
+        balance_margin=5,
+    )
+    assert first != portfolio_config_hash(
+        max_per_company=2,
+        capacity=10,
+        cooldown_days=30,
+        balance_margin=6,
+    )
 
 
 def test_config_rejects_a_bool_cap(tmp_path: Path) -> None:
     path = tmp_path / "portfolio.yaml"
     path.write_text(
-        "version: phase14-v1\nportfolio:\n  enabled: true\n  max_applications_per_company: true\n"
+        "version: phase14-v2\n"
+        "portfolio:\n"
+        "  enabled: true\n"
+        "  max_applications_per_company: true\n"
+        "  balance_margin: 5\n"
     )
     with pytest.raises(ValueError):
         load_portfolio_config(str(path))
@@ -102,6 +126,26 @@ def test_company_cap_is_per_run_and_suffix_aware() -> None:
     blocked = [item for item in decisions if item.decision == BLOCKED_COMPANY]
     assert len(blocked) == 6
     assert all(item.reason == "blocked_company_concentration" for item in blocked)
+    jobs = [
+        _job("a-pm", id=1, company="Acme", priority_score=90),
+        _job("b-pm", id=2, company="Beta", priority_score=89),
+        _job(
+            "a-consult",
+            id=3,
+            company="Acme LLC",
+            role_family="CONSULTING",
+            priority_score=88,
+        ),
+    ]
+    balanced = allocate_portfolio(
+        jobs,
+        cooldown_companies=set(),
+        capacity=2,
+        max_per_company=1,
+        balance_margin=5,
+    )
+    chosen_ids = [item.job.external_id for item in balanced if item.decision == ALLOCATED]
+    assert chosen_ids == ["a-pm", "b-pm"]
 
 
 def test_ignored_job_does_not_consume_a_slot() -> None:
@@ -179,12 +223,11 @@ def test_role_family_targets_are_soft() -> None:
     }
     for job in chosen:
         counts[job.role_family or "OTHER"] += 1
-    assert counts == {
-        "PRODUCT_MANAGEMENT": 4,
-        "CONSULTING": 4,
-        "STRATEGY_TRANSFORMATION": 1,
-        "OTHER": 1,
-    }
+    assert counts["PRODUCT_MANAGEMENT"] == 6
+    assert counts["CONSULTING"] == 4
+    assert counts["STRATEGY_TRANSFORMATION"] == 0
+    assert counts["OTHER"] == 0
+    assert "STRATEGY_TRANSFORMATION-0" not in {job.external_id for job in chosen}
     kept = {"CONSULTING-0", "CONSULTING-1"}
     short = [
         job
@@ -204,6 +247,69 @@ def test_role_family_targets_are_soft() -> None:
         max_per_company=1,
     )
     assert any(item.decision == ALLOCATED for item in again)
+
+    strong = _job("pm-strong", id=100, company="Strong", priority_score=94)
+    weak = _job(
+        "consult-weak",
+        id=101,
+        company="Weak",
+        role_family="CONSULTING",
+        priority_score=82,
+    )
+    protected = allocate_portfolio(
+        [strong, weak],
+        cooldown_companies=set(),
+        capacity=1,
+        max_per_company=2,
+    )
+    assert [item.job.external_id for item in protected if item.decision == ALLOCATED] == [
+        "pm-strong"
+    ]
+    close_pm = _job("pm-close", id=102, company="ClosePM", priority_score=89)
+    close_consult = _job(
+        "consult-close",
+        id=103,
+        company="CloseC",
+        role_family="CONSULTING",
+        priority_score=87,
+    )
+    balanced = allocate_portfolio(
+        [close_pm, close_consult],
+        cooldown_companies=set(),
+        capacity=1,
+        max_per_company=2,
+    )
+    assert [item.job.external_id for item in balanced if item.decision == ALLOCATED] == [
+        "consult-close"
+    ]
+    hybrid = _job(
+        "hybrid",
+        id=104,
+        company="Hybrid",
+        role_family="PRODUCT_MANAGEMENT",
+        role_secondary_family="CONSULTING",
+        priority_score=88,
+    )
+    seated = allocate_portfolio(
+        [hybrid, close_consult],
+        cooldown_companies=set(),
+        capacity=1,
+        max_per_company=2,
+        balance_margin=0,
+    )
+    assert [item.job.external_id for item in seated if item.decision == ALLOCATED] == ["hybrid"]
+    unranked = _job("none", id=105, company="NoneCo", priority_score=None)
+    skipped = allocate_portfolio(
+        [unranked, strong],
+        cooldown_companies=set(),
+        capacity=2,
+        max_per_company=2,
+    )
+    missing = next(item for item in skipped if item.job.external_id == "none")
+    assert missing.decision == DEFERRED
+    assert missing.reason == "deferred_missing_priority"
+    assert unranked.status == Status.staged
+    assert unranked.priority_score is None
 
 
 def test_priority_order_and_zero_capacity() -> None:

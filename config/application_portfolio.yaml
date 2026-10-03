@@ -5,8 +5,11 @@
 # Role mix is the Phase 7 weights: Product Management 40, Consulting 40,
 # Strategy/Transformation 15, and every other family shares the OTHER weight of 5.
 
-version: phase14-v1
+version: phase14-v2
 
 portfolio:
   enabled: true
   max_applications_per_company: 2
+  # A lower-priority job may take a seat from a higher-priority one only when
+  # it is within this many points and its role-family target is still open.
+  balance_margin: 5
