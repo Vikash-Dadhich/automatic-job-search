@@ -30,3 +30,5 @@ The run log `discovery_coverage` has the totals and family rollups. The query ro
 ## Limits
 
 These metrics describe this system's searches. They do not estimate the unseen market, rank queries by candidate fit, or merge the same job across boards.
+
+Recall against a frozen list of known postings is a separate measurement. See [Discovery recall benchmark](discovery-recall-benchmark.md). That sample is not a share of the market either.

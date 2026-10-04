@@ -1,0 +1,13 @@
+# Frozen Summer 2027 MBA internship recall sample.
+# Add a case only after a person has opened the posting on a V1 board
+# (LinkedIn, Indeed, Google, ZipRecruiter, or a configured Workday tenant)
+# and recorded its URL or source id. Do not invent URLs or ids.
+# Do not copy the full job description. Do not mark a case captured here;
+# capture is measured later against stored jobs.
+#
+# version must stay discovery-recall-v1.
+# Each case needs case_id, relevant, internship, summer_2027, verified_on,
+# provenance, and at least one observation with source plus external_id or url.
+
+version: discovery-recall-v1
+cases: []
