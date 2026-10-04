@@ -18,8 +18,8 @@ One posting observed on two boards is one case with two observations. It counts 
 
 `scraper/discovery_recall.py` uses the same identity rules as job upsert:
 
-- the same source and external id
-- or the same canonical posting URL, without a location or employer conflict
+- the same source and external id, unless the employer or a specific location clearly conflicts
+- or the same canonical posting URL, with those same conflict checks
 - or the same description hash with the same company, title, and agreeing location, and without two different posting URLs
 
 A shared title is not a match.

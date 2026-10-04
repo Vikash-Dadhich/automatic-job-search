@@ -163,21 +163,24 @@ def eligible(case: BenchmarkCase) -> bool:
     return case.relevant and case.internship and case.summer_2027
 
 
+def _identity_conflict(obs: Observation, job: ObservedJob) -> bool:
+    """Same safeguards as a cross-source URL match. A blank field is not a conflict."""
+    if locations_conflict(obs.location, job.location):
+        return True
+    return bool(obs.company and job.company and not same_employer(obs.company, job.company))
+
+
 def observation_matches(obs: Observation, job: ObservedJob) -> bool:
-    """Same rules as job upsert: source id, posting URL, or strong field match."""
+    """Source id, posting URL, or strong field match. Conflicts stay unmatched."""
     if (
         obs.source == job.source
         and obs.external_id
         and job.external_id
         and obs.external_id == job.external_id
     ):
-        return True
+        return not _identity_conflict(obs, job)
     if same_posting_url(obs.url, job.url):
-        if locations_conflict(obs.location, job.location):
-            return False
-        if obs.company and job.company and not same_employer(obs.company, job.company):
-            return False
-        return True
+        return not _identity_conflict(obs, job)
     if not obs.content_hash or obs.content_hash != job.content_hash:
         return False
     if urls_conflict(obs.url, job.url):

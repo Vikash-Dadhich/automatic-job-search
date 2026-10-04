@@ -48,6 +48,28 @@ def _job(**kwargs: object) -> ObservedJob:
     return ObservedJob(**data)  # type: ignore[arg-type]
 
 
+def test_source_id_respects_employer_and_location_conflicts() -> None:
+    case = _case(
+        Observation(
+            source="linkedin",
+            external_id="ext-1",
+            company="Acme",
+            title="Product Manager Intern",
+            location="Seattle, WA",
+        )
+    )
+    compatible = _job(external_id="ext-1", company="Acme LLC", location="Seattle, WA", url=None)
+    assert measure_recall([case], [compatible]).matched == 1
+    other_employer = _job(external_id="ext-1", company="Beta", location="Seattle, WA", url=None)
+    assert measure_recall([case], [other_employer]).matched == 0
+    other_city = _job(external_id="ext-1", company="Acme", location="Boston, MA", url=None)
+    assert measure_recall([case], [other_city]).matched == 0
+    missing_company = _job(external_id="ext-1", company=None, location="Seattle, WA", url=None)
+    assert measure_recall([case], [missing_company]).matched == 1
+    missing_location = _job(external_id="ext-1", company="Acme", location=None, url=None)
+    assert measure_recall([case], [missing_location]).matched == 1
+
+
 def test_source_id_matches_and_title_alone_does_not() -> None:
     case = _case(Observation(source="linkedin", external_id="ext-1", title="Other title"))
     same_title = _job(external_id="different", title="Product Manager Intern", url=None)
