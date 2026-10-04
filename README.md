@@ -2,7 +2,7 @@
 
 Agentic, human-in-the-loop job discovery, scoring, and application engine.
 
-Discovers jobs from LinkedIn/Indeed and Workday portals, scores them with Gemini (default; Anthropic optional) against a grounded candidate profile, attaches your base resume PDF (or a Typst-tailored one on demand), sends LinkedIn/Indeed application prep packs via Telegram, pre-fills Workday applications, and pauses for Telegram approval before any submit.
+Discovers jobs from LinkedIn, Indeed, Google, ZipRecruiter, and Workday portals, scores them with OpenAI (`gpt-5-mini` by default) against a grounded candidate profile, attaches your base resume PDF (or a Typst-tailored one on demand), and sends the persisted shortlist on Telegram. Workday pre-fill exists and waits for approval before submit. The scheduled workflow leaves apply, peer benchmarking, and skill-suggestion cards off.
 
 ## Status
 
@@ -10,13 +10,24 @@ Discovers jobs from LinkedIn/Indeed and Workday portals, scores them with Gemini
 |------|--------|--------|
 | 1 | Foundations (config, profile, SQLite) | Done |
 | 2 | Ingestion (JobSpy + Workday REST) | Done |
-| 3 | Scorer (Gemini / Anthropic, tiers) | Done |
+| 3 | Scorer (OpenAI `gpt-5-mini`, tiers) | Done |
 | 4 | Resume (base PDF default + Typst on demand) | Done |
-| 5 | Automation (Playwright Workday) | Done |
+| 5 | Automation (Playwright Workday; live apply off unless `ENABLE_APPLY`) | Done |
 | 6 | Telegram review bot | Done |
 | 7 | Orchestration & deploy | Done |
-| 8 | Two-tier resume (role baseline + Telegram skill suggestions + one-page autofit) | Done |
-| 9 | LinkedIn peer benchmarking (optional, off by default) | Done |
+| 8 | Two-tier resume (role baseline + skill suggestions + one-page autofit; suggestion cards off unless `ENABLE_SUGGESTIONS`) | Done |
+| 9 | LinkedIn peer benchmarking (off unless `ENABLE_LINKEDIN_SCRAPE`; this is not job discovery) | Done |
+| 10 | Structured JD reading (`phase19-v1`) | Done |
+| 11 | Role classification, primary and secondary (`phase5-v4`) | Done |
+| 12 | Eligibility. Unknown sponsorship is not a rejection | Done |
+| 13 | Company intelligence, factual only (`phase8-v2`) | Done |
+| 14 | Priority 2.0, separate from fit (`phase12-v2`) | Done |
+| 15 | Shortlist 2.0. Telegram sends that persisted list (`phase13-v2`) | Done |
+| 16 | Portfolio 2.0. Allocates apply capacity and does not submit (`phase14-v2`) | Done |
+| 17 | Application tracking | Done |
+| 18 | Career intelligence, stored separately from priority | Done |
+| 19 | Run monitoring | Done |
+| 20 | CI: pytest, Ruff, and Pyright on push and pull request | Done |
 
 ## Setup
 
@@ -69,7 +80,7 @@ Placeholder Workday tenants are skipped automatically. LinkedIn/Indeed calls may
 
 ## Run scoring (Step 3)
 
-Put your Gemini key in `.env` (`LLM_PROVIDER=gemini`, `GEMINI_API_KEY=...`), then score discovered jobs:
+Put `OPENAI_API_KEY` in `.env`. Scoring uses OpenAI (`gpt-5-mini` unless `OPENAI_SCORER_MODEL` is set), then score discovered jobs:
 
 ```bash
 uv run python -c "
@@ -82,7 +93,7 @@ print(summary)
 ```
 
 Tiers: 1 (score ≥ 85 or dream company) and 2 (65–84) → `staged`; 3 (< 65) → `filtered_out`.
-Tier-1 jobs also get an `outreach_draft`. Offline tests use a mock LLM client (no API key required).
+Outreach and cover letters are written only when `TIER_ONE_DRAFTS_ENABLED` is true. Offline tests use a mock LLM client (no API key required).
 
 If you already have a local `storage/job_agent.db` from before Step 3, delete it once so new columns (`outreach_draft`, `scored_at`) are created:
 

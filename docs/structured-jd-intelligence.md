@@ -1,6 +1,6 @@
 # Structured JD intelligence
 
-The normalized description remains the text the rest of the pipeline stores and hashes. This layer is a second reading of that same text. It does not replace `description_clean`, and it does not change role family, fit, eligibility, priority, shortlist, portfolio, applications, feedback, calibration, or monitoring.
+The normalized description remains the text the rest of the pipeline stores and hashes. This layer is a second reading of that same text. It does not replace `description_clean`, and it does not write `priority_score`, fit, eligibility, role family, shortlist, portfolio, applications, feedback, calibration, or monitoring. Priority 2.0 later reads the stored reading for JD evidence quality and program evidence. That read does not change the fit score.
 
 ## What is stored
 

@@ -45,7 +45,7 @@ jobs:
           ENABLE_PREP_PACK: "true"
           # Full-mode prep packs only. Brief mode sends one shortlist file.
           PREP_PACK_LIMIT: "20"
-          # Brief mode: one shortlist text file (scores above 75, then fill to 20).
+          # Brief mode: one text file of the persisted shortlist (shortlist_rank).
           # Set to false to re-enable full essay-drafted prep packs.
           PREP_PACK_BRIEF: "true"
           # Skill-suggestion cards are not being reviewed right now (resume

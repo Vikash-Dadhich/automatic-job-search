@@ -7,7 +7,7 @@ Guidance for AI agents and developers working on this repository. Read this befo
 Agentic, human-in-the-loop job discovery, scoring, and application engine. It runs (eventually 3x/day) to:
 
 1. Discover jobs posted in the last 24h from LinkedIn/Indeed (JobSpy) and target Workday portals (CXS REST).
-2. Pre-filter with hard negative rules, then score 0-100 with Gemini (default; Anthropic optional) against a grounded candidate profile.
+2. Pre-filter with hard negative rules, then score 0-100 with OpenAI (`gpt-5-mini` by default) against a grounded candidate profile.
 3. Attach your base resume (`config/base_resume.pdf`) by default — or generate a Typst-tailored PDF on demand — and sanitize PDF metadata.
 4. Pre-fill Workday applications with stealth Playwright and pause at the final review screen.
 5. Send an interactive Telegram review (screenshot + link + drafted answers); never blind-submit.
@@ -21,7 +21,7 @@ Everything is async Python. Applications are NEVER auto-submitted without human 
 |------|-------|--------|
 | 1 | Foundations: config, profile, SQLite | Done |
 | 2 | Ingestion: JobSpy + Workday REST | Done |
-| 3 | Scorer: Gemini (default) / Anthropic, tiers, outreach | Done |
+| 3 | Scorer: OpenAI `gpt-5-mini`, tiers, outreach | Done |
 | 4 | Resume: base PDF default + Typst on demand + pikepdf | Done |
 | 5 | Automation: Playwright Workday, vault, human telemetry | Done |
 | 6 | Telegram review bot + FastAPI webhook | Done |
@@ -205,6 +205,8 @@ Note: `create_all` does NOT ALTER an existing SQLite file. When adding columns, 
 
 Provider clients live in `scorer/clients.py`; `scorer/engine.py` re-exports
 `LLMClient` / `GeminiClient` / `AnthropicClient` / `build_llm_client` for back-compat.
+`build_llm_client()` returns `OpenAIClient`. The Gemini notes below describe that
+retained client. They are not the live scoring path.
 
 - Per-role models: `GEMINI_SCORER_MODEL` (fast, high volume) vs `GEMINI_WRITER_MODEL`
   (deep reasoning, few calls). Thinking level is per-role too

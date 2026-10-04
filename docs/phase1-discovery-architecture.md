@@ -4,7 +4,7 @@ Recorded 29 September 2026.
 
 The family weights represent discovery/search priority and are not candidate-to-job fit scores.
 
-Phase 2 will expand and refine the search taxonomy and vocabulary. This phase only builds the structure those phrases plug into.
+This document records the structure built in Phase 1. Phase 2 has since filled that structure: the search phrases live in `config/discovery.yaml`. See [Phase 2 search taxonomy](phase2-search-taxonomy.md).
 
 ## Purpose
 

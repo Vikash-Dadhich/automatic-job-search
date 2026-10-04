@@ -15,7 +15,7 @@ A search is one planned phrase on one source. JobSpy still runs the phrase once 
 | failed | The search did not run to a result. This is not an empty market. |
 | not executed | The plan included it, but this run did not report it. |
 
-Identity is `source` plus `external_id`, the same key already stored on a job. A posting with no external id counts as raw and unidentified. It is not treated as a new unique job. The same external id on LinkedIn and Indeed stays two discoveries. Cross-board identity is a later phase.
+Identity in this report is `source` plus `external_id`. A posting with no external id counts as raw and unidentified. It is not treated as a new unique job. The same external id on LinkedIn and Indeed stays two discoveries here. Stored jobs can still be linked across boards by [Phase 11 job identity](phase11-job-identity.md). This coverage report does not use that link, and it does not measure how many internships exist outside these searches.
 
 Incremental discovery is how many identities in that search had not already appeared in an earlier search in plan order. Repeats inside one search count once. Family, bucket, and source incremental numbers add up to the run's unique count.
 
