@@ -473,6 +473,7 @@ async def _safe_close_stage(
                 within_run_duplicates=getattr(result, "within_run_duplicates", None),
                 hard_filtered_out=getattr(result, "filtered_out", None),
                 persisted=getattr(result, "upserted", None),
+                partial=getattr(result, "partial", None),
             )
         await close_stage_run(
             stage_id,

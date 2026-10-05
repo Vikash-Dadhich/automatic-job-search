@@ -158,6 +158,18 @@ class Settings(BaseSettings):
             "omits the variable will score full-time titles."
         ),
     )
+    jobspy_query_timeout_seconds: int = Field(
+        default=180,
+        ge=1,
+        description=(
+            "Seconds one JobSpy query process may run before its process group is killed. "
+            "This is the hard bound. asyncio.wait_for on a worker thread does not stop "
+            "JobSpy's blocking HTTP calls. Installed python-jobspy does not pass "
+            "ScraperInput.request_timeout into scrape_jobs. LinkedIn and Indeed set "
+            "per-request timeouts of 10s or 5s; Google and ZipRecruiter set none. "
+            "Those request timeouts do not bound the whole query."
+        ),
+    )
     enable_seniority_filter: bool = Field(
         default=True,
         description="Drop over-senior titles (director/vp/principal/...) before scoring",

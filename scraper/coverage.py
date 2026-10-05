@@ -536,6 +536,7 @@ def discovery_evidence(
     within_run_duplicates: int | None,
     hard_filtered_out: int | None,
     persisted: int | None,
+    partial: bool | None = None,
 ) -> dict[str, Any]:
     """JSON stored on the ingestion stage. No descriptions or credentials."""
     queries = []
@@ -565,6 +566,11 @@ def discovery_evidence(
         "hard_filtered_out": hard_filtered_out,
         "persisted": persisted,
         "persistence_note": "upsert_job does not distinguish insert from update",
+        "incremental_commit": (
+            "each finished JobSpy query is committed before the next query, "
+            "and a finished Workday fetch is committed without waiting for JobSpy"
+        ),
+        "partial": partial,
         "queries": queries,
     }
 
