@@ -10,11 +10,13 @@ import json
 from dataclasses import dataclass, is_dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 import structlog
 
 from config.settings import PROJECT_ROOT
 from scraper.discovery import DiscoveryPlan
+from scraper.redact import redact_error
 
 log = structlog.get_logger(__name__)
 
@@ -27,6 +29,7 @@ class SearchStatus(StrEnum):
     empty = "empty"
     failed = "failed"
     not_executed = "not_executed"
+    partial = "partial"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +44,11 @@ class SearchObservation:
     hits: tuple[str | None, ...] = ()
     error: str | None = None
     detail: str = ""
+    fetched_count: int | None = None
+    location_dropped: int | None = None
+    recency_dropped: int | None = None
+    possible_cap: bool = False
+    ambiguous: bool = False
 
     @property
     def raw_count(self) -> int:
@@ -74,14 +82,32 @@ def observe_search(
     error: str | None = None,
     detail: str = "",
     failed: bool = False,
+    skipped: bool = False,
+    fetched_count: int | None = None,
+    location_dropped: int | None = None,
+    recency_dropped: int | None = None,
+    possible_cap: bool = False,
+    ambiguous: bool = False,
 ) -> SearchObservation:
-    """Build an observation. Failure stays failure even when nothing came back."""
-    if failed:
+    """Build an observation. Failure stays failure even when nothing came back.
+
+    Hits plus an error are partial: the rows are kept and the error is kept.
+    Partial is not an empty result. Ambiguous rows are partial too, including
+    a scrape that returned nothing attributable.
+    """
+    if failed and hits:
+        status = SearchStatus.partial
+    elif failed:
         status = SearchStatus.failed
+    elif skipped:
+        status = SearchStatus.not_executed
+    elif ambiguous:
+        status = SearchStatus.partial
     elif hits:
         status = SearchStatus.results
     else:
         status = SearchStatus.empty
+    safe_error = redact_error(error) if error else None
     return SearchObservation(
         family_id=family_id,
         bucket_id=bucket_id,
@@ -89,8 +115,13 @@ def observe_search(
         source=source,
         status=status,
         hits=hits,
-        error=error,
+        error=safe_error,
         detail=detail,
+        fetched_count=fetched_count,
+        location_dropped=location_dropped,
+        recency_dropped=recency_dropped,
+        possible_cap=possible_cap,
+        ambiguous=ambiguous,
     )
 
 
@@ -123,6 +154,11 @@ class QueryMetrics:
     unidentified: int
     duplicate: int
     error: str | None
+    fetched_count: int | None = None
+    location_dropped: int | None = None
+    recency_dropped: int | None = None
+    possible_cap: bool = False
+    hits: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +398,11 @@ def build_coverage_report(
             unidentified=observation.unidentified_count,
             duplicate=max(0, identifiable - unique),
             error=observation.error,
+            fetched_count=observation.fetched_count,
+            location_dropped=observation.location_dropped,
+            recency_dropped=observation.recency_dropped,
+            possible_cap=observation.possible_cap,
+            hits=tuple(identities),
         )
         queries.append(row)
         for tally in (
@@ -379,7 +420,7 @@ def build_coverage_report(
                 tally.with_results += 1
             elif observation.status is SearchStatus.empty:
                 tally.zero_result += 1
-            elif observation.status is SearchStatus.failed:
+            elif observation.status in {SearchStatus.failed, SearchStatus.partial}:
                 tally.failed += 1
 
     family_rows = tuple(families[name].finish() for name in families)
@@ -393,7 +434,9 @@ def build_coverage_report(
     duplicate = max(0, identifiable - unique)
     with_results = sum(1 for row in queries if row.status is SearchStatus.results)
     zero_result = sum(1 for row in queries if row.status is SearchStatus.empty)
-    failed = sum(1 for row in queries if row.status is SearchStatus.failed)
+    failed = sum(
+        1 for row in queries if row.status in {SearchStatus.failed, SearchStatus.partial}
+    )
     not_executed = sum(1 for row in queries if row.status is SearchStatus.not_executed)
     executed_count = with_results + zero_result + failed
     successful = with_results + zero_result
@@ -475,6 +518,55 @@ def log_coverage(report: CoverageReport) -> None:
         ],
         identity_scope=report.identity_scope,
     )
+
+
+RECENCY_SEMANTICS = {
+    "linkedin": "JobSpy sends f_TPR seconds equal to hours_old * 3600 at request time",
+    "indeed": "JobSpy sends dateOnIndeed starting hours_old hours before the request",
+    "google": "hours_old is ignored because google_search_term replaces the time phrase",
+    "zip_recruiter": "hours_old is rounded up to the next full day",
+    "workday": "post-fetch postedOn and startDate filter; a missing date is kept",
+}
+
+
+def discovery_evidence(
+    report: CoverageReport,
+    *,
+    hours_old: int | None,
+    within_run_duplicates: int | None,
+    hard_filtered_out: int | None,
+    persisted: int | None,
+) -> dict[str, Any]:
+    """JSON stored on the ingestion stage. No descriptions or credentials."""
+    queries = []
+    for row in report.queries:
+        queries.append(
+            {
+                "family_id": row.family_id,
+                "bucket_id": row.bucket_id,
+                "query": row.query,
+                "source": row.source,
+                "detail": row.detail,
+                "status": row.status.value,
+                "fetched_count": row.fetched_count,
+                "retained_count": row.raw,
+                "location_dropped": row.location_dropped,
+                "recency_dropped": row.recency_dropped,
+                "within_query_duplicates": row.duplicate,
+                "possible_cap_hit": row.possible_cap,
+                "hits": list(row.hits),
+                "error": row.error,
+            }
+        )
+    return {
+        "hours_old": hours_old,
+        "recency_semantics": dict(RECENCY_SEMANTICS),
+        "within_run_duplicates_removed": within_run_duplicates,
+        "hard_filtered_out": hard_filtered_out,
+        "persisted": persisted,
+        "persistence_note": "upsert_job does not distinguish insert from update",
+        "queries": queries,
+    }
 
 
 def write_coverage(report: CoverageReport, path: Path | None = None) -> Path:

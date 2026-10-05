@@ -98,6 +98,24 @@ def test_phase2_vocabulary_is_unique_and_searched() -> None:
     assert "Product Lead Intern" in searched
     assert "MBA Strategy Intern" in searched
     assert "GTM Strategy Intern" in searched
+    assert "AI Consulting Intern" in by_bucket["TECHNOLOGY_CONSULTING"].queries
+    assert "AI Strategy Intern" in by_bucket["TECHNOLOGY_STRATEGY"].queries
+    assert "Data Strategy MBA Intern" in by_bucket["TECHNOLOGY_STRATEGY"].title_variants
+    assert "Product Growth Intern" in by_bucket["PRODUCT_STRATEGY"].queries
+    assert "AI Transformation Intern" in by_bucket["BUSINESS_TRANSFORMATION"].queries
+    assert "Digital Transformation Intern" in by_bucket["BUSINESS_TRANSFORMATION"].queries
+    assert "Customer Strategy Intern" in by_bucket["BUSINESS_STRATEGY"].title_variants
+    assert "Strategic Analytics Intern" in by_bucket["BUSINESS_STRATEGY"].title_variants
+    assert "New Ventures Intern" in by_bucket["CORPORATE_STRATEGY"].title_variants
+    assert "Innovation Strategy Intern" in by_bucket["STRATEGIC_INITIATIVES"].title_variants
+    assert "General Management MBA Intern" in by_bucket["OTHER_ADJACENT_MBA_ROLES"].queries
+    for phrase in (
+        "AI Consulting Intern",
+        "AI Strategy Intern",
+        "Product Growth Intern",
+        "General Management Intern",
+    ):
+        assert phrase in searched
     assert phrases == [item.query for item in plan.searches]
 
 

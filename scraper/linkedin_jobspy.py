@@ -17,6 +17,7 @@ from scraper.coverage import SearchObservation, observe_search, result_identity
 from scraper.discovery import DiscoveryPlan, PlannedSearch
 from scraper.filters import location_acceptable
 from scraper.models import RawPosting
+from scraper.redact import redact_error
 
 log = structlog.get_logger(__name__)
 
@@ -94,19 +95,31 @@ def _dataframe_to_postings(
     *,
     profile: Profile | None,
     search: PlannedSearch | None = None,
-) -> list[RawPosting]:
+) -> tuple[list[RawPosting], dict[str, dict[str, int]]]:
     if df is None or getattr(df, "empty", True):
-        return []
+        return [], {}
 
     records = df.to_dict(orient="records")
     seen: set[tuple[str, str]] = set()
     out: list[RawPosting] = []
+    stats: dict[str, dict[str, int]] = {}
+
+    def _bucket(name: str) -> dict[str, int]:
+        row = stats.get(name)
+        if row is None:
+            row = {"fetched": 0, "location_dropped": 0}
+            stats[name] = row
+        return row
 
     for row in records:
         site_raw = str(_row_value(row, "site", default="") or "").lower().strip()
         source = _SITE_MAP.get(site_raw)
         if source is None:
+            unidentified = stats.setdefault("unidentified", {"count": 0})
+            unidentified["count"] += 1
             continue
+        bucket = _bucket(source.value)
+        bucket["fetched"] += 1
 
         title = str(_row_value(row, "title", default="") or "").strip()
         company = str(_row_value(row, "company", default="") or "").strip()
@@ -122,6 +135,7 @@ def _dataframe_to_postings(
             location_s = None
 
         if not _location_matches(location_s, profile):
+            bucket["location_dropped"] += 1
             continue
 
         description = _row_value(row, "description")
@@ -152,7 +166,12 @@ def _dataframe_to_postings(
                 company_url=company_url,
             )
         )
-    return out
+    return out, stats
+
+
+def google_executed_query(term: str) -> str:
+    """Text sent to Google Jobs. This does not apply ``hours_old``."""
+    return f"{term} internship"
 
 
 def _google_search_term(_search: SearchConfig, term: str) -> str:
@@ -161,7 +180,7 @@ def _google_search_term(_search: SearchConfig, term: str) -> str:
     Location is passed separately via ``scrape_jobs(location=...)``. Embedding
     a country like "United States" in the query is rejected by Google Jobs.
     """
-    return f"{term} internship"
+    return google_executed_query(term)
 
 
 def _effective_windows(search: SearchConfig, sites: list[str] | None = None) -> dict[str, str]:
@@ -201,9 +220,14 @@ def _scrape_term(search: SearchConfig, term: str, sites: list[str]) -> Any:
         # keeps LinkedIn/Indeed/ZipRecruiter results for this term.
         if "google_search_term" not in kwargs or "google_search_term" not in str(exc):
             raise
-        log.warning("jobspy_google_search_term_unsupported", error=str(exc))
+        log.warning("jobspy_google_search_term_unsupported", error=redact_error(str(exc)))
         kwargs.pop("google_search_term", None)
         return scrape_jobs(**kwargs)
+
+
+def possible_result_cap(returned: int, limit: int | None) -> bool:
+    """True when a source filled its configured cap. Not proof that rows were missed."""
+    return bool(limit) and returned >= limit
 
 
 def _jobspy_observations(
@@ -212,17 +236,27 @@ def _jobspy_observations(
     batch: list[RawPosting],
     *,
     error: str | None = None,
+    stats: dict[str, dict[str, int]] | None = None,
+    results_wanted: int | None = None,
 ) -> list[SearchObservation]:
     by_site: dict[str, list[RawPosting]] = {site: [] for site in sites}
     for posting in batch:
         by_site.setdefault(posting.source.value, []).append(posting)
+    unidentified = int((stats or {}).get("unidentified", {}).get("count", 0))
+    ambiguous = unidentified > 0 and error is None
     notes: list[SearchObservation] = []
-    ordered = list(sites) + [site for site in by_site if site not in sites]
+    extras = [site for site in by_site if site not in sites and site != "unidentified"]
+    ordered = list(sites) + extras
     for site in ordered:
         rows = by_site.get(site, [])
         hits = tuple(
             result_identity(row.source.value, row.external_id) for row in rows
         )
+        site_stats = (stats or {}).get(site, {})
+        fetched = site_stats.get("fetched", 0 if error else len(rows))
+        site_error = error
+        if ambiguous and not site_error:
+            site_error = "jobspy rows had no recognized site and were not attributed"
         notes.append(
             observe_search(
                 family_id=item.family_id,
@@ -230,8 +264,24 @@ def _jobspy_observations(
                 query=item.query,
                 source=site,
                 hits=() if error else hits,
-                error=error,
+                error=site_error,
                 failed=error is not None,
+                fetched_count=fetched,
+                location_dropped=site_stats.get("location_dropped", 0),
+                possible_cap=possible_result_cap(fetched, results_wanted),
+                ambiguous=ambiguous,
+            )
+        )
+    if ambiguous:
+        notes.append(
+            observe_search(
+                family_id=item.family_id,
+                bucket_id=item.bucket_id,
+                query=item.query,
+                source="unidentified",
+                hits=(None,) * unidentified,
+                error="jobspy rows had no recognized site and were not attributed",
+                ambiguous=True,
             )
         )
     return notes
@@ -274,16 +324,29 @@ async def fetch_linkedin_indeed(
         try:
             df = await asyncio.to_thread(_scrape_term, search, item.query, sites)
         except Exception as exc:
-            log.warning("jobspy_scrape_failed", term=item.query, error=str(exc))
+            log.warning("jobspy_scrape_failed", term=item.query, error=redact_error(str(exc)))
             if observations is not None:
                 observations.extend(
-                    _jobspy_observations(item, sites, [], error=str(exc)[:200])
+                    _jobspy_observations(
+                        item,
+                        sites,
+                        [],
+                        error=redact_error(str(exc)),
+                    )
                 )
             continue
 
-        batch = _dataframe_to_postings(df, profile=profile, search=item)
+        batch, stats = _dataframe_to_postings(df, profile=profile, search=item)
         if observations is not None:
-            observations.extend(_jobspy_observations(item, sites, batch))
+            observations.extend(
+                _jobspy_observations(
+                    item,
+                    sites,
+                    batch,
+                    stats=stats,
+                    results_wanted=search.results_wanted,
+                )
+            )
         for posting in batch:
             key = (posting.source.value, posting.external_id)
             if key in seen:

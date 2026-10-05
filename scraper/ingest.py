@@ -45,6 +45,8 @@ class IngestSummary:
     by_source: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     coverage: CoverageReport | None = None
+    within_run_duplicates: int = 0
+    hours_old: int | None = None
 
 
 async def _load_role_client() -> LLMClient | None:
@@ -178,16 +180,18 @@ def _mark_source_failed(
         )
 
 
-def _dedupe(postings: list[RawPosting]) -> list[RawPosting]:
+def _dedupe(postings: list[RawPosting]) -> tuple[list[RawPosting], int]:
     seen: set[tuple[str, str]] = set()
     out: list[RawPosting] = []
+    removed = 0
     for posting in postings:
         key = (posting.source.value, posting.external_id)
         if key in seen:
+            removed += 1
             continue
         seen.add(key)
         out.append(posting)
-    return out
+    return out, removed
 
 
 async def run_ingestion(
@@ -206,7 +210,7 @@ async def run_ingestion(
     await init_db()
     targets = targets or load_targets()
     profile = profile or load_profile()
-    summary = IngestSummary()
+    summary = IngestSummary(hours_old=targets.search.hours_old)
     plan = build_discovery_plan(targets, capacity=search_capacity)
     log_discovery_plan(plan)
     provenance = {
@@ -279,7 +283,7 @@ async def run_ingestion(
         raw.extend(result)
         summary.by_source[label] = len(result)
 
-    postings = _dedupe(raw)
+    postings, summary.within_run_duplicates = _dedupe(raw)
     summary.fetched = len(postings)
 
     # Ensure clean descriptions before filtering

@@ -1,13 +1,398 @@
 # Frozen Summer 2027 MBA internship recall sample.
-# Add a case only after a person has opened the posting on a V1 board
-# (LinkedIn, Indeed, Google, ZipRecruiter, or a configured Workday tenant)
-# and recorded its URL or source id. Do not invent URLs or ids.
-# Do not copy the full job description. Do not mark a case captured here;
-# capture is measured later against stored jobs.
+# Each case was opened on 2026-10-04 on a V1 board. Do not invent URLs or ids.
+# Do not copy the full job description. Capture is measured against stored jobs,
+# not recorded in this file.
 #
 # version must stay discovery-recall-v1.
 # Each case needs case_id, relevant, internship, summer_2027, verified_on,
 # provenance, and at least one observation with source plus external_id or url.
 
 version: discovery-recall-v1
-cases: []
+cases:
+  - case_id: sf-jr362509
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: CONSULTING
+    provenance: >
+      Opened the Salesforce Futureforce Workday posting (HTTP 200). Title states
+      Summer 2027 intern. Qualifications require current MBA enrollment and
+      Spring 2028 graduation. Sibling reqs JR362508 and JR362499 are separate cases.
+    observations:
+      - source: workday
+        external_id: salesforce:JR362509
+        url: https://salesforce.wd12.myworkdayjobs.com/en-US/Futureforce_Internships/job/New-York---New-York/Summer-2027-Intern---MBA-Business-Value---Strategic-Selling-Consultant_JR362509
+        company: Salesforce
+        title: Summer 2027 Intern - MBA Business Value & Strategic Selling Consultant
+        location: New York - New York
+
+  - case_id: sf-jr362508
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: CONSULTING
+    provenance: >
+      Opened the Salesforce Futureforce Workday posting (HTTP 200). Financial
+      Services track. Qualifications require an MBA and name management consulting
+      experience. Distinct requisition from JR362509.
+    observations:
+      - source: workday
+        external_id: salesforce:JR362508
+        url: https://salesforce.wd12.myworkdayjobs.com/en-US/Futureforce_Internships/job/New-York---New-York/Summer-2027-Intern---MBA-Business-Value---Strategic-Selling-Consultant--Financial-Services-_JR362508
+        company: Salesforce
+        title: Summer 2027 Intern - MBA Business Value & Strategic Selling Consultant (Financial Services)
+        location: New York - New York
+
+  - case_id: sf-jr362499
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: CONSULTING
+    provenance: >
+      Opened the Salesforce Futureforce Workday posting (HTTP 200). Healthcare
+      and Life Sciences track. The page asks for an MBA intern. Distinct requisition
+      from JR362509.
+    observations:
+      - source: workday
+        external_id: salesforce:JR362499
+        url: https://salesforce.wd12.myworkdayjobs.com/en-US/Futureforce_Internships/job/New-York---New-York/Summer-2027-Intern---MBA-Business-Value---Strategic-Selling-Consultant--Healthcare---Life-Sciences-_JR362499
+        company: Salesforce
+        title: Summer 2027 Intern - MBA Business Value & Strategic Selling Consultant (Healthcare & Life Sciences)
+        location: New York - New York
+
+  - case_id: li-4473553475
+    relevant: true
+    internship: true
+    summer_2027: false
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened https://www.linkedin.com/jobs/view/4473553475 on 2026-10-04 (HTTP 200).
+      Intuit, Mountain View, CA. The page says MBA Intern for Summer 2027 and a
+      10-12 week internship, then says the internship begins in May or June 2026.
+      summer_2027 is false until that contradiction is resolved. This is not a
+      verified negative. The case stays in the file and out of the recall denominator.
+    observations:
+      - source: linkedin
+        external_id: li-4473553475
+        url: https://www.linkedin.com/jobs/view/4473553475
+        company: Intuit
+        title: "Summer 2027: MBA Corporate Strategy & Development Intern"
+        location: Mountain View, CA
+
+  - case_id: li-4473756333
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Intuit, Mountain View, CA.
+      Qualifications require current enrollment in an MBA program. The page body
+      contains Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4473756333
+        url: https://www.linkedin.com/jobs/view/4473756333
+        company: Intuit
+        title: "Summer 2027: MBA Strategic Finance Intern, GBSG"
+        location: Mountain View, CA
+
+  - case_id: li-4471167170
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Land O'Lakes, Arden Hills, MN.
+      Requires a current first-year MBA student graduating Spring or Summer 2028
+      and describes a summer internship. Title states Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4471167170
+        url: https://www.linkedin.com/jobs/view/4471167170
+        company: "Land O'Lakes, Inc."
+        title: Corporate Strategy MBA Intern, Summer 2027
+        location: Arden Hills, MN
+
+  - case_id: li-4448207117
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Momentum, Dallas, TX. Requires a
+      full-time MBA graduating between December 2027 and June 2028. The page body
+      contains Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4448207117
+        url: https://www.linkedin.com/jobs/view/4448207117
+        company: Momentum
+        title: 2027 MBA Summer Associate - Strategy & Operations
+        location: Dallas, TX
+
+  - case_id: li-4468974424
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Humana, Louisville, KY. Requires
+      current MBA enrollment or another advanced degree, and the title is a
+      Summer 2027 MBA internship. Also open to non-MBA advanced degrees.
+    observations:
+      - source: linkedin
+        external_id: li-4468974424
+        url: https://www.linkedin.com/jobs/view/4468974424
+        company: Humana
+        title: Summer 2027 MBA Internship – Strategy and Operations
+        location: Louisville, KY
+
+  - case_id: li-4468985188
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Humana, Louisville, KY. Primary
+      Care and Clinical Innovation track. Same MBA-or-other-advanced-degree line
+      as the strategy posting. Counted separately because the title and job id differ.
+    observations:
+      - source: linkedin
+        external_id: li-4468985188
+        url: https://www.linkedin.com/jobs/view/4468985188
+        company: Humana
+        title: Summer 2027 MBA Internship – Primary Care & Clinical Innovation
+        location: Louisville, KY
+
+  - case_id: li-4449222769
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: PRODUCT_MANAGEMENT
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Medline, Northfield, IL. Title is
+      Product Management, Summer 2027. Qualifications say currently pursuing an MBA.
+    observations:
+      - source: linkedin
+        external_id: li-4449222769
+        url: https://www.linkedin.com/jobs/view/4449222769
+        company: Medline Industries, LP
+        title: MBA Intern, Product Management - Summer 2027
+        location: Northfield, IL
+
+  - case_id: li-4453383308
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: PRODUCT_MANAGEMENT
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Vertiv, Delaware, OH. Requires
+      current MBA enrollment and expected graduation in 12-24 months. The page
+      body contains Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4453383308
+        url: https://www.linkedin.com/jobs/view/4453383308
+        company: Vertiv
+        title: Product Management Intern - MBA (Summer 2027)
+        location: Delaware, OH
+
+  - case_id: li-4473197758
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: PRODUCT_MANAGEMENT
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Respawn Entertainment, Los Angeles.
+      The page names Product Manager Intern, MBA Level (Apex Legends) and the body
+      contains Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4473197758
+        url: https://www.linkedin.com/jobs/view/4473197758
+        company: Respawn Entertainment
+        title: Product Manager Intern, MBA Level - Summer 2027 (Apex Legends)
+        location: Los Angeles, CA
+
+  - case_id: li-4459029953
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Vertiv, Columbus, OH. Requires
+      currently pursuing an MBA. Title states Services Strategy and Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4459029953
+        url: https://www.linkedin.com/jobs/view/4459029953
+        company: Vertiv
+        title: Services Strategy MBA Intern - Summer 2027
+        location: Columbus, OH
+
+  - case_id: li-4460839064
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    role_family: STRATEGY_TRANSFORMATION
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Amgen, United States. Requires a
+      full-time MBA and availability for full-time employment by July 2028 if
+      offered. Title is Finance and Strategy, Summer 2027. Distinct from the
+      commercial posting.
+    observations:
+      - source: linkedin
+        external_id: li-4460839064
+        url: https://www.linkedin.com/jobs/view/4460839064
+        company: Amgen
+        title: MBA Intern – Finance & Strategy Leadership Development Program (Summer 2027)
+        location: United States
+
+  - case_id: li-4460834141
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Amgen, United States. Requires a
+      full-time MBA. Title is the Commercial Leadership Program for Summer 2027.
+      Not labeled with a discovery family because the posting is commercial, not
+      one of the named strategy or product titles.
+    observations:
+      - source: linkedin
+        external_id: li-4460834141
+        url: https://www.linkedin.com/jobs/view/4460834141
+        company: Amgen
+        title: MBA Intern – Commercial Leadership Program (Summer 2027)
+        location: United States
+
+  - case_id: li-4469777096
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). The Marzetti Company, Columbus, OH.
+      The page says this brand-management role is for MBA students only and is a
+      summer internship. Title states Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4469777096
+        url: https://www.linkedin.com/jobs/view/4469777096
+        company: The Marzetti Company
+        title: MBA - Brand Management Internship - Summer 2027
+        location: Columbus, OH
+
+  - case_id: li-4474585224
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Keurig Dr Pepper, Frisco, TX.
+      Requires a two-year full-time MBA between the first and second year.
+      Title is Associate Brand Manager, Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4474585224
+        url: https://www.linkedin.com/jobs/view/4474585224
+        company: Keurig Dr Pepper Inc.
+        title: Summer 2027 Intern - Associate Brand Manager - MBA
+        location: Frisco, TX
+
+  - case_id: li-4469345846
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Marvell Technology, Santa Clara,
+      CA. Requires a master's degree (MBA) in business. Title is Project Management
+      Intern, Summer 2027. The 2026-10-04 audit corrected the employer from
+      Marvell Semiconductor, which blocked a match to stored li-4469345846.
+    observations:
+      - source: linkedin
+        external_id: li-4469345846
+        url: https://www.linkedin.com/jobs/view/4469345846
+        company: Marvell Technology
+        title: Project Management Intern, MBA - Summer 2027
+        location: Santa Clara, CA
+
+  - case_id: li-4467405266
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). MiniMed, Los Angeles, CA. Requires
+      a full-time MBA, class of Spring 2028. The page body contains Summer 2027.
+      Title does not name a function, so no role family is set.
+    observations:
+      - source: linkedin
+        external_id: li-4467405266
+        url: https://www.linkedin.com/jobs/view/4467405266
+        company: MiniMed
+        title: MBA Intern Summer 2027
+        location: Los Angeles, CA
+
+  - case_id: li-4472792956
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Medtronic. The page places the MBA
+      LDRP internships in Minneapolis, MN, and the body contains Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4472792956
+        url: https://www.linkedin.com/jobs/view/4472792956
+        company: Medtronic
+        title: MBA Internship - Summer 2027
+        location: Minneapolis, MN
+
+  - case_id: li-4472832202
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Regeneron, Tarrytown, NY. The page
+      seeks first-year MBA students for its MBA summer internship program.
+    observations:
+      - source: linkedin
+        external_id: li-4472832202
+        url: https://www.linkedin.com/jobs/view/4472832202
+        company: Regeneron Pharmaceuticals
+        title: Summer 2027 MBA Interns | Business Leadership Development Program (BuiLD)
+        location: Tarrytown, NY
+
+  - case_id: li-4458022844
+    relevant: true
+    internship: true
+    summer_2027: true
+    verified_on: "2026-10-04"
+    provenance: >
+      Opened the LinkedIn job page (HTTP 200). Walmart, Bentonville, AR. Requires
+      current MBA enrollment and graduation in December 2027 or Spring 2028.
+      Title is the Finance Leadership Development Program for Summer 2027.
+    observations:
+      - source: linkedin
+        external_id: li-4458022844
+        url: https://www.linkedin.com/jobs/view/4458022844
+        company: Walmart
+        title: "Summer 2027 MBA Intern: Finance Leadership Development Program (FLDP)"
+        location: Bentonville, AR

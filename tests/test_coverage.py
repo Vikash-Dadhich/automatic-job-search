@@ -66,7 +66,7 @@ def test_catalog_weights_and_phrase_count_unchanged() -> None:
     found = {family.id: family.weight for family in config.families}
     assert found == _WEIGHTS
     texts = enabled_query_texts(config)
-    assert len(texts) == 111
+    assert len(texts) == 123
     assert "MBA Summer Associate" in texts
     assert "Marketing Intern" in texts
     assert "Technology Strategy Intern" in texts

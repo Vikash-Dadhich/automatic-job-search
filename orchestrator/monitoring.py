@@ -28,6 +28,7 @@ from core.db import (
     session_scope,
 )
 from orchestrator.scheduler import parse_hhmm
+from scraper.redact import redact_error
 
 MONITORING_VERSION = "phase18-v1"
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "monitoring.yaml"
@@ -228,6 +229,7 @@ async def close_stage_run(
     now: datetime | None = None,
     error: str | None = None,
     counters: dict[str, int] | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> None:
     finished = _moment(now)
     async with session_scope() as session:
@@ -241,9 +243,21 @@ async def close_stage_run(
         row.finished_at = finished
         row.duration_ms = max(0, int((finished - started).total_seconds() * 1000))
         if error:
-            row.error = error.replace("\n", " ")[:500]
+            row.error = redact_error(error, limit=500)
         if counters is not None:
             row.counters = dict(counters)
+        if evidence is not None:
+            run = (
+                await session.exec(
+                    select(PipelineRun).where(col(PipelineRun.id) == row.pipeline_run_id)
+                )
+            ).first()
+            payload = dict(evidence)
+            payload["run_id"] = row.pipeline_run_id
+            payload["run_key"] = run.run_key if run is not None else None
+            payload["started_at"] = (_as_utc(row.started_at) or finished).isoformat()
+            payload["finished_at"] = finished.isoformat()
+            row.evidence = payload
         session.add(row)
 
 

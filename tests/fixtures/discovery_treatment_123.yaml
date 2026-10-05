@@ -1,0 +1,374 @@
+version: discovery-experiment-v1
+arm: treatment_123
+frozen_from: working tree config/discovery.yaml at the Fix 9 catalog, including the 12 added phrases
+phrase_sha256: 3b9bb17f2de21d3a527ed80ef9062d4eb90995114df8f9962302634c1b1b9696
+phrases:
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PM_CORE
+  query: Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PM_CORE
+  query: Product Management Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PM_CORE
+  query: Product Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PM_CORE
+  query: Product Lead Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PM_CORE
+  query: Product Management Associate Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: MBA Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: MBA Product Management Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: Associate Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: Product Management MBA Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: MBA Product Summer Associate
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: Summer Associate, Product Management
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: APM Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: APM_MBA_PM
+  query: Product Manager MBA Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Technical Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Digital Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Platform Product Manager Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Technical Product Management Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Digital Product Management Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: TECHNICAL_PRODUCT
+  query: Platform Product Management Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_STRATEGY
+  query: Product Strategy Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_STRATEGY
+  query: Product Strategy MBA Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_STRATEGY
+  query: Product Growth Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_OPERATIONS
+  query: Product Operations Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_OPERATIONS
+  query: Product Operations MBA Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_OPERATIONS
+  query: Product Development Intern
+- family_id: PRODUCT_MANAGEMENT
+  bucket_id: PRODUCT_OPERATIONS
+  query: Product Innovation Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Management Consultant Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Management Consulting Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Consulting Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: MBA Consulting Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Advisory Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: MBA Summer Associate
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Summer Associate MBA
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: MBA Summer Internship
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Consulting Summer Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Summer Consulting Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: MBA Consultant Intern
+- family_id: CONSULTING
+  bucket_id: MANAGEMENT_CONSULTING
+  query: Management Advisory Intern
+- family_id: CONSULTING
+  bucket_id: STRATEGY_CONSULTING
+  query: Strategy Consulting Intern
+- family_id: CONSULTING
+  bucket_id: STRATEGY_CONSULTING
+  query: Strategy Consultant Intern
+- family_id: CONSULTING
+  bucket_id: STRATEGY_CONSULTING
+  query: Strategy & Operations Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TECHNOLOGY_CONSULTING
+  query: Technology Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TECHNOLOGY_CONSULTING
+  query: Technology Consultant Intern
+- family_id: CONSULTING
+  bucket_id: TECHNOLOGY_CONSULTING
+  query: Digital Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TECHNOLOGY_CONSULTING
+  query: AI Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TECHNOLOGY_CONSULTING
+  query: Technology Advisory Intern
+- family_id: CONSULTING
+  bucket_id: BUSINESS_CONSULTING
+  query: Business Consulting Intern
+- family_id: CONSULTING
+  bucket_id: BUSINESS_CONSULTING
+  query: Business Consultant Intern
+- family_id: CONSULTING
+  bucket_id: BUSINESS_CONSULTING
+  query: Business Advisory Intern
+- family_id: CONSULTING
+  bucket_id: TRANSFORMATION_CONSULTING
+  query: Transformation Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TRANSFORMATION_CONSULTING
+  query: Transformation Consultant Intern
+- family_id: CONSULTING
+  bucket_id: TRANSFORMATION_CONSULTING
+  query: Digital Transformation Consulting Intern
+- family_id: CONSULTING
+  bucket_id: TRANSFORMATION_CONSULTING
+  query: Business Transformation Consulting Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Corporate Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: MBA Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Enterprise Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Growth Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Corporate Development Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: MBA Strategy Summer Associate
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Summer Associate, Strategy
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Summer Associate, Corporate Strategy
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: Growth Strategy MBA Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: CORPORATE_STRATEGY
+  query: New Ventures Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Business Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Strategy & Operations Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Strategy and Operations Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: MBA Strategy & Operations Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Commercial Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Revenue Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Operations Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Strategic Operations Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Customer Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_STRATEGY
+  query: Strategic Analytics Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Strategic Initiatives Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Strategic Initiatives MBA Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Strategic Planning Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Strategic Planning MBA Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Business Planning Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: STRATEGIC_INITIATIVES
+  query: Innovation Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_TRANSFORMATION
+  query: Business Transformation Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_TRANSFORMATION
+  query: Transformation Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_TRANSFORMATION
+  query: Transformation Management Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_TRANSFORMATION
+  query: Digital Transformation Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: BUSINESS_TRANSFORMATION
+  query: AI Transformation Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Technology Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Tech Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: IT Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Digital Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Technology Transformation Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: MBA Technology Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Technology Strategy Summer Associate
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: AI Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: TECHNOLOGY_STRATEGY
+  query: Data Strategy MBA Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: GTM_STRATEGY
+  query: Go-to-Market Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: GTM_STRATEGY
+  query: Go-to-Market Strategy Intern
+- family_id: STRATEGY_TRANSFORMATION
+  bucket_id: GTM_STRATEGY
+  query: GTM Strategy Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Marketing Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Marketing Strategy Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Brand Management Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Brand Strategy Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Consumer Marketing Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: MBA Marketing Intern
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: MBA Marketing Summer Associate
+- family_id: OTHER
+  bucket_id: MARKETING
+  query: Marketing Summer Associate
+- family_id: OTHER
+  bucket_id: PRODUCT_MARKETING
+  query: Product Marketing Intern
+- family_id: OTHER
+  bucket_id: PRODUCT_MARKETING
+  query: Product Marketing MBA Intern
+- family_id: OTHER
+  bucket_id: PRODUCT_MARKETING
+  query: MBA Product Marketing Intern
+- family_id: OTHER
+  bucket_id: PRODUCT_MARKETING
+  query: Product Marketing Manager Intern
+- family_id: OTHER
+  bucket_id: PRODUCT_MARKETING
+  query: Technical Product Marketing Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: Program Manager Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: Program Management Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: MBA Program Management Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: Technical Program Manager Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: Technical Program Management Intern
+- family_id: OTHER
+  bucket_id: PROGRAM_MANAGEMENT
+  query: Strategic Program Intern
+- family_id: OTHER
+  bucket_id: PROJECT_MANAGEMENT
+  query: Project Manager Intern
+- family_id: OTHER
+  bucket_id: PROJECT_MANAGEMENT
+  query: Project Management Intern
+- family_id: OTHER
+  bucket_id: OTHER_ADJACENT_MBA_ROLES
+  query: Customer Success Intern
+- family_id: OTHER
+  bucket_id: OTHER_ADJACENT_MBA_ROLES
+  query: Customer Experience Intern
+- family_id: OTHER
+  bucket_id: OTHER_ADJACENT_MBA_ROLES
+  query: Business Operations Intern
+- family_id: OTHER
+  bucket_id: OTHER_ADJACENT_MBA_ROLES
+  query: General Management Intern
+- family_id: OTHER
+  bucket_id: OTHER_ADJACENT_MBA_ROLES
+  query: General Management MBA Intern

@@ -9,16 +9,31 @@ The normalized description remains the text the rest of the pipeline stores and 
 - `content_hash` — the normalized JD hash the reading was built from
 - `version` — `phase19-v1`
 - `availability` — `available`, `partial` (truncated text), or `unavailable` (missing or suspiciously short)
-- `document` — responsibilities, required and preferred qualifications, experience, education and MBA, functional phrases, internship or program signals, work model, sponsorship and authorization evidence, and domain phrases
+- `document` — responsibilities, required and preferred qualifications, experience, education and MBA, functional phrases, internship or program signals, work model, sponsorship and authorization evidence, domain phrases, and one application-deadline reading
 
 Each extracted item keeps a short snippet and an explicit basis. A usable JD with no mention is `not_mentioned`. A missing or unreadable JD stays `unknown`. Nothing is filled in from the job title or the company name.
 
 `MBA internship` records the program. It does not, by itself, mark an MBA degree as required.
 
+## Application deadline
+
+`document.application_deadline` is a separate reading of explicit apply-by or closing language. Its `version` is `deadline-v1`. States:
+
+- `CONFIRMED` — a supported phrase is tied to a full, valid calendar date. `deadline_date` is that date as `YYYY-MM-DD`.
+- `AMBIGUOUS` — a supported phrase is present, but the date is missing, incomplete, invalid, or too far from the phrase to attach. `deadline_date` stays empty. A month-day with no year is not given a year.
+- `NOT_FOUND` — no supported deadline phrase was found. A bare date, a posting date, a last-revised date, internship timing, a graduation date, an interview date, or “meet deadlines” stays here.
+- `UNUSABLE` — the description is missing, suspiciously short, or the deadline parser failed. The rest of the structured reading still returns.
+
+Supported phrases include “deadline to apply,” “application deadline,” “application window … will close,” “recruiting for this role ends on,” “posted until,” “job posting expiration,” “must be submitted by,” “close/closing date,” and “apply by/before.” Numeric dates are month-first. A two-digit year such as `10/16/26` is read as 2000–2099. The evidence span is the phrase plus the date, clipped to 160 characters, with the rule id that matched.
+
+This reading does not change fit, eligibility, Priority 2.0, shortlist, portfolio, or Telegram. Priority’s structured hash does not include the deadline block.
+
+A stored document from before this field still loads. The deadline block defaults to `NOT_FOUND` with no date. That row is not current until the next structured-JD attach rewrites it. This repository does not add a jobs-table column for the deadline and does not backfill existing databases on its own. `structured_job_descriptions` is created by the normal `init_db` table create when that table is missing. No separate migration is required.
+
 ## Cache
 
-A row is current only when its hash equals the job's normalized hash and its version is `phase19-v1`. Ingestion writes the row after the job is saved. The same text is not extracted again. A changed description drops the old row and the next pass writes a new one. Jobs that have never been through this pass simply have no row.
+A row is current only when its hash equals the job's normalized hash, its version is `phase19-v1`, and `application_deadline.version` is `deadline-v1`. Ingestion writes the row after the job is saved. The same text is not extracted again once that deadline block is present. A changed description drops the old row and the next pass writes a new one. Jobs that have never been through this pass simply have no row.
 
 ## Limits
 
-The extractor is deterministic and phrase-based. Headings it does not recognize do not become qualifications. Years, degrees, sponsorship, and clearance are recorded only when the wording is explicit. This file is evidence for later fixes. It is not a decision.
+The extractor is deterministic and phrase-based. Headings it does not recognize do not become qualifications. Years, degrees, sponsorship, and clearance are recorded only when the wording is explicit. Deadline detection is not exhaustive: an unfamiliar closing phrase, or a date that is not next to a supported phrase, is not confirmed. This file is evidence for later fixes. It is not a decision.

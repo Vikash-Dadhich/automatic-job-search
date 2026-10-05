@@ -109,6 +109,26 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Print a pipeline health report and exit")
     doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub.add_parser("health", help="Print operational health and exit without the scheduler")
+    experiment = sub.add_parser(
+        "discovery-experiment",
+        help="Plan the frozen 111-vs-123 catalog comparison. Dry-run unless --live.",
+    )
+    experiment.add_argument(
+        "--live",
+        action="store_true",
+        help="Contact the configured job boards. Omit for a plan-only dry run.",
+    )
+    experiment.add_argument(
+        "--persist",
+        action="store_true",
+        help="Write the run JSON under storage/experiments. Requires --live. Does not upsert jobs.",
+    )
+    experiment.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for arm order. Recorded in the report.",
+    )
 
     return parser
 
@@ -665,6 +685,27 @@ def main(argv: list[str] | None = None) -> int:
     if command == "health":
         asyncio.run(_cmd_health())
         return 0
+
+    if command == "discovery-experiment":
+        from scraper.discovery_experiment import (
+            ExperimentRefusal,
+            format_summary,
+            run_discovery_experiment,
+        )
+
+        try:
+            report = asyncio.run(
+                run_discovery_experiment(
+                    live=args.live,
+                    persist=args.persist,
+                    seed=args.seed,
+                )
+            )
+        except ExperimentRefusal as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        print(format_summary(report))
+        return 0 if report["status"] != "incomplete" else 3
 
     async_commands: dict[str, Callable[[], Coroutine[Any, Any, Any]]] = {
         "serve": _cmd_serve,

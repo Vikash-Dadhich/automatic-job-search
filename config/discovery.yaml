@@ -56,6 +56,7 @@ families:
         queries:
           - "Product Strategy Intern"
           - "Product Strategy MBA Intern"
+          - "Product Growth Intern"
 
       - id: PRODUCT_OPERATIONS
         name: Product operations
@@ -107,6 +108,7 @@ families:
           - "Technology Consulting Intern"
           - "Technology Consultant Intern"
           - "Digital Consulting Intern"
+          - "AI Consulting Intern"
         title_variants:
           - "Technology Advisory Intern"
 
@@ -153,6 +155,7 @@ families:
           - "Summer Associate, Corporate Strategy"
         title_variants:
           - "Growth Strategy MBA Intern"
+          - "New Ventures Intern"
 
       - id: BUSINESS_STRATEGY
         name: Business strategy
@@ -167,6 +170,8 @@ families:
         title_variants:
           - "Operations Strategy Intern"
           - "Strategic Operations Intern"
+          - "Customer Strategy Intern"
+          - "Strategic Analytics Intern"
 
       - id: STRATEGIC_INITIATIVES
         name: Strategic initiatives
@@ -178,6 +183,7 @@ families:
           - "Strategic Planning MBA Intern"
         title_variants:
           - "Business Planning Intern"
+          - "Innovation Strategy Intern"
 
       - id: BUSINESS_TRANSFORMATION
         name: Business transformation
@@ -186,6 +192,8 @@ families:
           - "Business Transformation Intern"
           - "Transformation Strategy Intern"
           - "Transformation Management Intern"
+          - "Digital Transformation Intern"
+          - "AI Transformation Intern"
 
       - id: TECHNOLOGY_STRATEGY
         name: Technology strategy
@@ -198,6 +206,9 @@ families:
           - "Technology Transformation Intern"
           - "MBA Technology Strategy Intern"
           - "Technology Strategy Summer Associate"
+          - "AI Strategy Intern"
+        title_variants:
+          - "Data Strategy MBA Intern"
 
       - id: GTM_STRATEGY
         name: Go-to-market strategy
@@ -266,6 +277,8 @@ families:
           - "Customer Success Intern"
           - "Customer Experience Intern"
           - "Business Operations Intern"
+          - "General Management Intern"
+          - "General Management MBA Intern"
 
 sources:
   - id: linkedin

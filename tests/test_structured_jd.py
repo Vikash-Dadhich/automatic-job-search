@@ -213,6 +213,11 @@ def test_version_must_match_the_current_extractor() -> None:
     )
     assert structured_jd_is_current(row, "abc") is False
     row.version = STRUCTURED_JD_VERSION
+    assert structured_jd_is_current(row, "abc") is False
+    row.document = {
+        "version": STRUCTURED_JD_VERSION,
+        "application_deadline": {"version": "deadline-v1", "state": "NOT_FOUND"},
+    }
     assert structured_jd_is_current(row, "different") is False
     assert structured_jd_is_current(row, "abc") is True
 

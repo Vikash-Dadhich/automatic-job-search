@@ -10,6 +10,7 @@ from scraper.discovery_recall import (
     BenchmarkCase,
     Observation,
     ObservedJob,
+    eligible,
     load_benchmark,
     measure_recall,
 )
@@ -206,5 +207,34 @@ def test_checked_in_sample_does_not_claim_recall() -> None:
         assert report.relevant == 0
     else:
         assert report.status == "measured"
-        assert report.relevant == len([case for case in cases if case.relevant])
+        assert report.relevant == len([case for case in cases if eligible(case)])
         assert report.recall is not None
+
+
+def test_marvell_employer_matches_the_stored_linkedin_id() -> None:
+    cases = load_benchmark(FIXTURE)
+    marvell = next(case for case in cases if case.case_id == "li-4469345846")
+    assert marvell.observations[0].company == "Marvell Technology"
+    stored = ObservedJob(
+        source="linkedin",
+        external_id="li-4469345846",
+        url="https://www.linkedin.com/jobs/view/4469345846",
+        company="Marvell Technology",
+        title="Project Management Intern, MBA - Summer 2027",
+        location="Santa Clara, CA",
+    )
+    report = measure_recall([marvell], [stored])
+    assert report.matched == 1
+    assert report.unmatched_ids == ()
+
+
+def test_contradictory_intuit_case_stays_out_of_the_denominator() -> None:
+    cases = load_benchmark(FIXTURE)
+    intuit = next(case for case in cases if case.case_id == "li-4473553475")
+    assert intuit.relevant is True
+    assert intuit.internship is True
+    assert intuit.summer_2027 is False
+    assert eligible(intuit) is False
+    report = measure_recall(cases, [])
+    assert report.relevant == len(cases) - 1
+    assert intuit.case_id not in report.unmatched_ids

@@ -20,6 +20,7 @@ from config.targets import WorkdayParts, WorkdayTenant
 from core.db import Source
 from scraper.coverage import SearchObservation, observe_search, result_identity
 from scraper.models import RawPosting
+from scraper.redact import redact_error
 
 log = structlog.get_logger(__name__)
 
@@ -217,6 +218,10 @@ def _workday_observation(
     *,
     provenance: dict[str, tuple[str, str]] | None,
     error: str | None = None,
+    fetched_count: int | None = None,
+    recency_dropped: int | None = None,
+    possible_cap: bool = False,
+    skipped: bool = False,
 ) -> SearchObservation:
     family_id, bucket_id = ("", "")
     if provenance and term in provenance:
@@ -226,10 +231,14 @@ def _workday_observation(
         bucket_id=bucket_id,
         query=term,
         source="workday",
-        hits=() if error else hits,
+        hits=hits,
         error=error,
         detail=tenant.name,
         failed=error is not None,
+        fetched_count=fetched_count,
+        recency_dropped=recency_dropped,
+        possible_cap=possible_cap,
+        skipped=skipped,
     )
 
 
@@ -250,12 +259,22 @@ async def fetch_workday(
 
     if tenant.is_placeholder:
         log.info("workday_skip_placeholder", name=tenant.name)
+        if observations is not None:
+            observations.append(
+                _workday_observation(
+                    tenant,
+                    "(placeholder)",
+                    (),
+                    provenance=None,
+                    skipped=True,
+                )
+            )
         return []
 
     try:
         parts = tenant.parsed()
     except ValueError as exc:
-        log.warning("workday_bad_url", name=tenant.name, error=str(exc))
+        log.warning("workday_bad_url", name=tenant.name, error=redact_error(str(exc)))
         if observations is not None:
             for term in cleaned_terms:
                 if not term:
@@ -266,7 +285,7 @@ async def fetch_workday(
                         term,
                         (),
                         provenance=provenance,
-                        error=str(exc)[:200],
+                        error=redact_error(str(exc)),
                     )
                 )
         return []
@@ -301,6 +320,10 @@ async def fetch_workday(
                 pages = 0
                 term_hits: list[str | None] = []
                 term_error: str | None = None
+                fetched_count = 0
+                recency_dropped = 0
+                hit_page_cap = False
+                listing_total = 0
                 while pages < max_pages:
                     try:
                         data = await _fetch_listing_page(
@@ -308,34 +331,37 @@ async def fetch_workday(
                         )
                     except WorkdayBlockedError as exc:
                         blocks += 1
-                        term_error = str(exc)[:200]
+                        term_error = redact_error(str(exc))
                         log.warning(
                             "workday_blocked",
                             tenant=parts.tenant,
                             term=term,
                             blocks=blocks,
-                            error=str(exc),
+                            error=term_error,
                         )
                         break
                     except (httpx.HTTPError, ValueError) as exc:
-                        term_error = str(exc)[:200]
+                        term_error = redact_error(str(exc))
                         log.warning(
                             "workday_list_error",
                             tenant=parts.tenant,
-                            error=str(exc),
+                            error=term_error,
                         )
                         break
 
                     batch = data.get("jobPostings") or []
                     total = int(data.get("total") or 0)
+                    listing_total = total
                     if not batch:
                         break
 
+                    fetched_count += len(batch)
                     recent = [
                         item
                         for item in batch
                         if _is_recent_posted_on(item.get("postedOn"), max_hours=hours_old)
                     ]
+                    recency_dropped += len(batch) - len(recent)
 
                     # Pair each item with its own task: filtering the task list while
                     # zipping against `recent` shifted details onto the wrong jobs.
@@ -375,6 +401,7 @@ async def fetch_workday(
                         if not _within_hours(start, max_hours=hours_old):
                             # postedOn said recent but startDate is older
                             if start is not None:
+                                recency_dropped += 1
                                 continue
 
                         job_req = (
@@ -436,19 +463,23 @@ async def fetch_workday(
                     if offset >= total:
                         break
                     await asyncio.sleep(0.25)
+                if pages >= max_pages and offset < listing_total:
+                    hit_page_cap = True
                 if observations is not None:
-                    failed = term_error if term_error and not term_hits else None
                     observations.append(
                         _workday_observation(
                             tenant,
                             term,
                             tuple(term_hits),
                             provenance=provenance,
-                            error=failed,
+                            error=term_error,
+                            fetched_count=fetched_count,
+                            recency_dropped=recency_dropped,
+                            possible_cap=hit_page_cap,
                         )
                     )
     except WorkdayBlockedError as exc:
-        log.warning("workday_blocked", tenant=parts.tenant, error=str(exc))
+        log.warning("workday_blocked", tenant=parts.tenant, error=redact_error(str(exc)))
         return postings
 
     log.info(
@@ -484,7 +515,7 @@ async def fetch_all_workday(
                 observations=observations,
             )
         except Exception as exc:
-            log.warning("workday_tenant_failed", name=tenant.name, error=str(exc))
+            log.warning("workday_tenant_failed", name=tenant.name, error=redact_error(str(exc)))
             if observations is not None:
                 recorded = {item.query for item in observations[before:]}
                 for term in terms:
@@ -495,7 +526,7 @@ async def fetch_all_workday(
                                 term,
                                 (),
                                 provenance=provenance,
-                                error=str(exc)[:200],
+                                error=redact_error(str(exc)),
                             )
                         )
             return []

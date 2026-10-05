@@ -626,6 +626,7 @@ class PipelineStageRun(SQLModel, table=True):
     duration_ms: int | None = Field(default=None)
     error: str | None = Field(default=None, max_length=500)
     counters: dict[str, int] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    evidence: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
 
 class RoleBaseline(SQLModel, table=True):
@@ -854,6 +855,7 @@ async def init_db() -> None:
         await conn.run_sync(SQLModel.metadata.create_all)
         await _ensure_job_columns(conn)
         await _ensure_company_columns(conn)
+        await _ensure_pipeline_stage_columns(conn)
         names = await _job_column_names(conn)
     # A legacy stub table may still lack the original identity columns.
     if "status" in names and "source" in names:
@@ -884,6 +886,33 @@ async def _job_column_names(conn: Any) -> set[str]:
             text(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'jobs' AND table_schema = current_schema()"
+            )
+        )
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+async def _ensure_pipeline_stage_columns(conn: Any) -> None:
+    """Add ingestion evidence to an existing stage table. No-op when absent or present."""
+    existing = await _named_table_columns(conn, "pipeline_stage_runs")
+    if not existing or "evidence" in existing:
+        return
+    await conn.execute(text("ALTER TABLE pipeline_stage_runs ADD COLUMN evidence JSON"))
+
+
+async def _named_table_columns(conn: Any, table: str) -> set[str]:
+    if table != "pipeline_stage_runs":
+        return set()
+    dialect = _dialect_name(conn)
+    if dialect == "sqlite":
+        rows = (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()
+        return {str(row[1]) for row in rows}
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'pipeline_stage_runs' "
+                "AND table_schema = current_schema()"
             )
         )
     ).fetchall()

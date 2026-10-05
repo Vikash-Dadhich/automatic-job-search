@@ -462,12 +462,24 @@ async def _safe_close_stage(
         return
     try:
         from orchestrator.monitoring import close_stage_run, stage_counters
+        from scraper.coverage import discovery_evidence
 
+        evidence = None
+        coverage = getattr(result, "coverage", None)
+        if coverage is not None:
+            evidence = discovery_evidence(
+                coverage,
+                hours_old=getattr(result, "hours_old", None),
+                within_run_duplicates=getattr(result, "within_run_duplicates", None),
+                hard_filtered_out=getattr(result, "filtered_out", None),
+                persisted=getattr(result, "upserted", None),
+            )
         await close_stage_run(
             stage_id,
             status=status,
             error=error,
             counters=stage_counters(result),
+            evidence=evidence,
         )
     except Exception as exc:
         log.warning("monitoring_stage_record_failed", error=str(exc)[:200])

@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 from sqlmodel import col, select
 
 from core.db import Job, StructuredJobDescription, _utcnow
+from scraper.application_deadline import (
+    DEADLINE_EXTRACTION_VERSION,
+    ApplicationDeadline,
+    empty_application_deadline,
+    extract_application_deadline,
+)
 from scraper.filters import (
     citizenship_restriction,
     clearance_requirement,
@@ -189,6 +195,9 @@ class StructuredJdDocument(BaseModel):
     work_model: WorkModelSignals
     authorization: AuthorizationEvidence
     domain: DomainSignals
+    application_deadline: ApplicationDeadline = Field(
+        default_factory=empty_application_deadline
+    )
 
 
 def structured_jd_is_current(
@@ -196,13 +205,16 @@ def structured_jd_is_current(
     digest: str | None,
 ) -> bool:
     """True when this row was built for this normalized text and this version."""
-    return bool(
+    if not (
         row is not None
         and digest
         and row.content_hash == digest
         and row.version == STRUCTURED_JD_VERSION
         and row.document
-    )
+    ):
+        return False
+    deadline = row.document.get("application_deadline") if isinstance(row.document, dict) else None
+    return isinstance(deadline, dict) and deadline.get("version") == DEADLINE_EXTRACTION_VERSION
 
 
 def extract_structured_jd(
@@ -288,7 +300,17 @@ def _empty(availability: Availability) -> StructuredJdDocument:
         work_model=WorkModelSignals(state=unknown),
         authorization=AuthorizationEvidence(state=unknown),
         domain=DomainSignals(state=unknown),
+        application_deadline=ApplicationDeadline(state="UNUSABLE"),
     )
+
+
+def _application_deadline(text: str) -> ApplicationDeadline:
+    """Deadline failure stays on this block. The rest of the reading still returns."""
+    try:
+        return extract_application_deadline(text)
+    except Exception as exc:
+        log.warning("application_deadline_extract_failed", error=str(exc)[:200])
+        return ApplicationDeadline(state="UNUSABLE", rule="extract_failed")
 
 
 def _clip(text: str) -> str:
@@ -761,4 +783,5 @@ def _read(text: str, availability: Availability) -> StructuredJdDocument:
         work_model=_work_model(text, True),
         authorization=_authorization(text, True),
         domain=_domain(text, True),
+        application_deadline=_application_deadline(text),
     )
