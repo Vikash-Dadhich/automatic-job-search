@@ -1,23 +1,34 @@
-"""LinkedIn / Indeed discovery via python-jobspy (async wrapper)."""
+"""LinkedIn / Indeed discovery via python-jobspy (async wrapper).
+
+Each query runs in a child process. The parent kills that process group when
+``jobspy_query_timeout_seconds`` elapses. A thread timeout is not used: cancelling
+the await would leave JobSpy's blocking HTTP calls running.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import math
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 
 from config.profile import Profile
+from config.settings import get_settings
 from config.targets import SearchConfig, Targets
 from core.db import Source
 from scraper.coverage import SearchObservation, observe_search, result_identity
 from scraper.discovery import DiscoveryPlan, PlannedSearch
 from scraper.filters import location_acceptable
+from scraper.jobspy_process import LineWorker, QueryTimeoutError, worker_argv
 from scraper.models import RawPosting
 from scraper.redact import redact_error
+
+QueryExecutor = Callable[..., Awaitable[list[dict[str, Any]]]]
+OnBatch = Callable[[list[RawPosting]], Awaitable[bool | None]]
 
 log = structlog.get_logger(__name__)
 
@@ -287,14 +298,69 @@ def _jobspy_observations(
     return notes
 
 
+class _RecordFrame:
+    """Just enough of a DataFrame for ``_dataframe_to_postings``."""
+
+    def __init__(self, records: list[dict[str, Any]]) -> None:
+        self._records = records
+        self.empty = not records
+
+    def to_dict(self, orient: str = "records") -> list[dict[str, Any]]:
+        del orient
+        return self._records
+
+
+def _query_payload(search: SearchConfig, term: str, sites: list[str]) -> dict[str, Any]:
+    return {
+        "term": term,
+        "sites": sites,
+        "search": {
+            "terms": [term],
+            "sites": sites,
+            "location": search.location,
+            "distance": search.distance,
+            "results_wanted": search.results_wanted,
+            "country_indeed": search.country_indeed,
+            "hours_old": search.hours_old,
+            "linkedin_fetch_description": search.linkedin_fetch_description,
+        },
+    }
+
+
+async def _records_from_worker(
+    worker: LineWorker,
+    search: SearchConfig,
+    term: str,
+    sites: list[str],
+    timeout: float,
+) -> list[dict[str, Any]]:
+    message = await worker.request(_query_payload(search, term, sites), timeout)
+    if not message.get("ok", False):
+        raise RuntimeError(str(message.get("error") or "jobspy worker failed"))
+    records = message.get("records")
+    if not isinstance(records, list):
+        raise RuntimeError("jobspy worker returned no record list")
+    return [row for row in records if isinstance(row, dict)]
+
+
 async def fetch_linkedin_indeed(
     targets: Targets,
     *,
     profile: Profile | None = None,
     plan: DiscoveryPlan | None = None,
     observations: list[SearchObservation] | None = None,
+    on_batch: OnBatch | None = None,
+    query_executor: QueryExecutor | None = None,
+    timeout: float | None = None,
+    command: list[str] | None = None,
 ) -> list[RawPosting]:
-    """Fetch JobSpy postings for the discovery plan, once per selected query."""
+    """Fetch JobSpy postings for the discovery plan, once per selected query.
+
+    A failed or timed-out query is recorded as failed and the loop continues.
+    When ``on_batch`` is set, each query's new postings are handed off immediately
+    and this function does not keep them. Callers that need the full list omit
+    ``on_batch``.
+    """
     search = targets.search
     if plan is None:
         planned = tuple(
@@ -304,8 +370,23 @@ async def fetch_linkedin_indeed(
     else:
         planned = plan.searches
         sites = list(plan.jobspy_sites)
+    limit = (
+        float(timeout)
+        if timeout is not None
+        else float(get_settings().jobspy_query_timeout_seconds)
+    )
     all_postings: list[RawPosting] = []
     seen: set[tuple[str, str]] = set()
+    worker: LineWorker | None = None
+    if query_executor is None:
+        worker = LineWorker(command or worker_argv())
+
+    async def run_query(term: str) -> list[dict[str, Any]]:
+        if query_executor is not None:
+            return await query_executor(search, term, sites, limit)
+        if worker is None:
+            raise RuntimeError("jobspy worker is not running")
+        return await _records_from_worker(worker, search, term, sites, limit)
 
     log.warning(
         "jobspy_recency_windows",
@@ -313,47 +394,71 @@ async def fetch_linkedin_indeed(
         effective=_effective_windows(search, sites),
     )
 
-    for item in planned:
-        log.info(
-            "jobspy_scrape_start",
-            term=item.query,
-            family=item.family_id or None,
-            bucket=item.bucket_id or None,
-            sites=sites,
-        )
-        try:
-            df = await asyncio.to_thread(_scrape_term, search, item.query, sites)
-        except Exception as exc:
-            log.warning("jobspy_scrape_failed", term=item.query, error=redact_error(str(exc)))
+    try:
+        for item in planned:
+            log.info(
+                "jobspy_scrape_start",
+                term=item.query,
+                family=item.family_id or None,
+                bucket=item.bucket_id or None,
+                sites=sites,
+            )
+            try:
+                records = await run_query(item.query)
+            except asyncio.CancelledError:
+                raise
+            except QueryTimeoutError as exc:
+                log.warning("jobspy_scrape_timeout", term=item.query, error=str(exc))
+                if observations is not None:
+                    observations.extend(
+                        _jobspy_observations(item, sites, [], error=str(exc))
+                    )
+                continue
+            except Exception as exc:
+                safe = redact_error(str(exc))
+                log.warning("jobspy_scrape_failed", term=item.query, error=safe)
+                if observations is not None:
+                    observations.extend(
+                        _jobspy_observations(item, sites, [], error=safe)
+                    )
+                continue
+
+            batch, stats = _dataframe_to_postings(
+                _RecordFrame(records),
+                profile=profile,
+                search=item,
+            )
             if observations is not None:
                 observations.extend(
                     _jobspy_observations(
                         item,
                         sites,
-                        [],
-                        error=redact_error(str(exc)),
+                        batch,
+                        stats=stats,
+                        results_wanted=search.results_wanted,
                     )
                 )
-            continue
-
-        batch, stats = _dataframe_to_postings(df, profile=profile, search=item)
-        if observations is not None:
-            observations.extend(
-                _jobspy_observations(
-                    item,
-                    sites,
-                    batch,
-                    stats=stats,
-                    results_wanted=search.results_wanted,
-                )
-            )
-        for posting in batch:
-            key = (posting.source.value, posting.external_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            all_postings.append(posting)
-        log.info("jobspy_scrape_done", term=item.query, count=len(batch))
+            fresh: list[RawPosting] = []
+            fresh_keys: set[tuple[str, str]] = set()
+            for posting in batch:
+                key = (posting.source.value, posting.external_id)
+                if key in seen or key in fresh_keys:
+                    continue
+                fresh_keys.add(key)
+                fresh.append(posting)
+            # Remember an id only after the caller accepts it. A failed commit
+            # returns False so a later query can try that posting again.
+            accepted = True
+            if on_batch is not None:
+                accepted = (await on_batch(fresh)) is not False
+            else:
+                all_postings.extend(fresh)
+            if accepted:
+                seen.update(fresh_keys)
+            log.info("jobspy_scrape_done", term=item.query, count=len(batch))
+    finally:
+        if worker is not None:
+            await worker.close()
 
     log.info("jobspy_total", count=len(all_postings))
     return all_postings

@@ -21,6 +21,7 @@ from scorer.eligibility import attach_eligibility
 from scraper.coverage import (
     CoverageReport,
     SearchObservation,
+    SearchStatus,
     build_coverage_report,
     fail_unrecorded,
     log_coverage,
@@ -28,8 +29,9 @@ from scraper.coverage import (
 )
 from scraper.discovery import DiscoveryPlan, build_discovery_plan, log_discovery_plan
 from scraper.filters import evaluate
-from scraper.linkedin_jobspy import fetch_linkedin_indeed
+from scraper.linkedin_jobspy import QueryExecutor, fetch_linkedin_indeed
 from scraper.models import RawPosting, to_job
+from scraper.redact import redact_error
 from scraper.structured_jd import attach_structured_jd
 from scraper.workday_rest import fetch_all_workday
 
@@ -47,6 +49,8 @@ class IngestSummary:
     coverage: CoverageReport | None = None
     within_run_duplicates: int = 0
     hours_old: int | None = None
+    partial: bool = False
+    queries_failed: int = 0
 
 
 async def _load_role_client() -> LLMClient | None:
@@ -180,133 +184,44 @@ def _mark_source_failed(
         )
 
 
-def _dedupe(postings: list[RawPosting]) -> tuple[list[RawPosting], int]:
-    seen: set[tuple[str, str]] = set()
-    out: list[RawPosting] = []
-    removed = 0
-    for posting in postings:
-        key = (posting.source.value, posting.external_id)
-        if key in seen:
-            removed += 1
-            continue
-        seen.add(key)
-        out.append(posting)
-    return out, removed
+@dataclass(frozen=True, slots=True)
+class _PersistCounts:
+    discovered: int
+    filtered_out: int
+    upserted: int
 
 
-async def run_ingestion(
-    *,
-    targets: Targets | None = None,
-    profile: Profile | None = None,
-    include_jobspy: bool = True,
-    include_workday: bool = True,
-    search_capacity: int | None = None,
-) -> IngestSummary:
-    """Run one full discovery cycle and persist results.
+async def _persist_postings(
+    postings: list[RawPosting],
+    profile: Profile,
+    role_client: LLMClient | None,
+) -> _PersistCounts:
+    """Commit one batch. The caller records counts only after this returns.
 
-    ``search_capacity`` is how many query executions to run. ``None`` runs every
-    enabled discovery query once. Allocation does not look at fit scores.
+    A raise here rolls this transaction back. Earlier commits stay. The caller
+    must not mark these ids as handled until this function returns.
     """
-    await init_db()
-    targets = targets or load_targets()
-    profile = profile or load_profile()
-    summary = IngestSummary(hours_old=targets.search.hours_old)
-    plan = build_discovery_plan(targets, capacity=search_capacity)
-    log_discovery_plan(plan)
-    provenance = {
-        search.query: (search.family_id, search.bucket_id) for search in plan.searches
-    }
-    jobspy_observations: list[SearchObservation] = []
-    workday_observations: list[SearchObservation] = []
-
-    tasks: list[asyncio.Task[list[RawPosting]]] = []
-    labels: list[str] = []
-
-    if include_jobspy and plan.jobspy_sites and plan.searches:
-        tasks.append(
-            asyncio.create_task(
-                fetch_linkedin_indeed(
-                    targets,
-                    profile=profile,
-                    plan=plan,
-                    observations=jobspy_observations,
-                ),
-                name="jobspy",
-            )
-        )
-        labels.append("jobspy")
-
-    active_tenants = targets.active_workday_tenants()
-    if include_workday and plan.workday_enabled and active_tenants and plan.searches:
-        tasks.append(
-            asyncio.create_task(
-                fetch_all_workday(
-                    active_tenants,
-                    default_search_terms=[search.query for search in plan.searches],
-                    hours_old=targets.search.hours_old,
-                    provenance=provenance,
-                    observations=workday_observations,
-                ),
-                name="workday",
-            )
-        )
-        labels.append("workday")
-
-    if not tasks:
-        log.warning(
-            "ingestion_noop",
-            reason="no enabled sources produced work",
-            include_jobspy=include_jobspy,
-            include_workday=include_workday,
-            search_terms=len(targets.search.terms),
-            active_workday=len(active_tenants),
-        )
-        _attach_coverage(summary, plan, jobspy_observations, workday_observations, ())
-        return summary
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    raw: list[RawPosting] = []
-    for label, result in zip(labels, results, strict=True):
-        if isinstance(result, BaseException):
-            msg = f"{label}: {result}"
-            summary.errors.append(msg)
-            log.warning("ingestion_source_failed", source=label, error=str(result))
-            _mark_source_failed(
-                plan,
-                label,
-                str(result)[:200],
-                jobspy_observations,
-                workday_observations,
-                tuple(tenant.name for tenant in active_tenants),
-            )
-            continue
-        raw.extend(result)
-        summary.by_source[label] = len(result)
-
-    postings, summary.within_run_duplicates = _dedupe(raw)
-    summary.fetched = len(postings)
-
-    # Ensure clean descriptions before filtering
-    for posting in postings:
-        posting.ensure_clean_description()
-
-    role_client = await _load_role_client()
+    if not postings:
+        return _PersistCounts(0, 0, 0)
+    discovered = 0
+    filtered_out = 0
+    upserted = 0
     async with session_scope() as session:
         for posting in postings:
+            posting.ensure_clean_description()
             result = evaluate(posting, profile)
             if result.passed:
                 job = to_job(posting, status=Status.discovered)
-                summary.discovered += 1
+                discovered += 1
             else:
                 job = to_job(
                     posting,
                     status=Status.filtered_out,
                     justification=[result.reason or "filtered"],
                 )
-                summary.filtered_out += 1
-
+                filtered_out += 1
             saved = await upsert_job(session, job)
-            summary.upserted += 1
+            upserted += 1
             try:
                 source = trustworthy_company_source(posting.company_url)
                 await attach_company_intelligence(
@@ -350,6 +265,159 @@ async def run_ingestion(
                     company=saved.company,
                     error=str(exc)[:200],
                 )
+    return _PersistCounts(discovered, filtered_out, upserted)
+
+
+def _dedupe(postings: list[RawPosting]) -> tuple[list[RawPosting], int]:
+    seen: set[tuple[str, str]] = set()
+    out: list[RawPosting] = []
+    removed = 0
+    for posting in postings:
+        key = (posting.source.value, posting.external_id)
+        if key in seen:
+            removed += 1
+            continue
+        seen.add(key)
+        out.append(posting)
+    return out, removed
+
+
+async def run_ingestion(
+    *,
+    targets: Targets | None = None,
+    profile: Profile | None = None,
+    include_jobspy: bool = True,
+    include_workday: bool = True,
+    search_capacity: int | None = None,
+    jobspy_executor: QueryExecutor | None = None,
+) -> IngestSummary:
+    """Run one full discovery cycle and persist results.
+
+    ``search_capacity`` is how many query executions to run. ``None`` runs every
+    enabled discovery query once. Allocation does not look at fit scores.
+    """
+    await init_db()
+    targets = targets or load_targets()
+    profile = profile or load_profile()
+    summary = IngestSummary(hours_old=targets.search.hours_old)
+    plan = build_discovery_plan(targets, capacity=search_capacity)
+    log_discovery_plan(plan)
+    provenance = {
+        search.query: (search.family_id, search.bucket_id) for search in plan.searches
+    }
+    jobspy_observations: list[SearchObservation] = []
+    workday_observations: list[SearchObservation] = []
+
+    active_tenants = targets.active_workday_tenants()
+    role_client = await _load_role_client()
+    seen: set[tuple[str, str]] = set()
+    persist_lock = asyncio.Lock()
+
+    async def _accept(label: str, postings: list[RawPosting]) -> bool:
+        if not postings:
+            return True
+        async with persist_lock:
+            fresh: list[RawPosting] = []
+            for posting in postings:
+                key = (posting.source.value, posting.external_id)
+                if key in seen:
+                    summary.within_run_duplicates += 1
+                    continue
+                fresh.append(posting)
+            if not fresh:
+                summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
+                return True
+            try:
+                counts = await _persist_postings(fresh, profile, role_client)
+            except Exception as exc:
+                safe = redact_error(str(exc))
+                summary.errors.append(f"{label}: {safe}")
+                log.warning("ingestion_persist_failed", source=label, error=safe)
+                return False
+            for posting in fresh:
+                seen.add((posting.source.value, posting.external_id))
+            summary.discovered += counts.discovered
+            summary.filtered_out += counts.filtered_out
+            summary.upserted += counts.upserted
+            summary.fetched += len(fresh)
+            summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
+            return True
+
+    tasks: list[asyncio.Task[list[RawPosting]]] = []
+    labels: list[str] = []
+
+    async def _run_jobspy() -> list[RawPosting]:
+        leftover = await fetch_linkedin_indeed(
+            targets,
+            profile=profile,
+            plan=plan,
+            observations=jobspy_observations,
+            on_batch=lambda batch: _accept("jobspy", batch),
+            query_executor=jobspy_executor,
+        )
+        # A caller that replaces fetch and returns rows still gets those rows saved.
+        await _accept("jobspy", leftover)
+        return []
+
+    async def _run_workday() -> list[RawPosting]:
+        postings = await fetch_all_workday(
+            active_tenants,
+            default_search_terms=[search.query for search in plan.searches],
+            hours_old=targets.search.hours_old,
+            provenance=provenance,
+            observations=workday_observations,
+        )
+        await _accept("workday", postings)
+        return []
+
+    if include_jobspy and plan.jobspy_sites and plan.searches:
+        tasks.append(asyncio.create_task(_run_jobspy(), name="jobspy"))
+        labels.append("jobspy")
+
+    if include_workday and plan.workday_enabled and active_tenants and plan.searches:
+        tasks.append(asyncio.create_task(_run_workday(), name="workday"))
+        labels.append("workday")
+
+    if not tasks:
+        log.warning(
+            "ingestion_noop",
+            reason="no enabled sources produced work",
+            include_jobspy=include_jobspy,
+            include_workday=include_workday,
+            search_terms=len(targets.search.terms),
+            active_workday=len(active_tenants),
+        )
+        _attach_coverage(summary, plan, jobspy_observations, workday_observations, ())
+        return summary
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for label, result in zip(labels, results, strict=True):
+        if isinstance(result, BaseException):
+            safe = redact_error(str(result))
+            summary.errors.append(f"{label}: {safe}")
+            log.warning("ingestion_source_failed", source=label, error=safe)
+            _mark_source_failed(
+                plan,
+                label,
+                safe,
+                jobspy_observations,
+                workday_observations,
+                tuple(tenant.name for tenant in active_tenants),
+            )
+
+    observations = (*jobspy_observations, *workday_observations)
+    failed_queries = {
+        observation.query
+        for observation in observations
+        if observation.status is SearchStatus.failed
+    }
+    troubled = {
+        observation.query
+        for observation in observations
+        if observation.status in {SearchStatus.failed, SearchStatus.partial}
+    }
+    summary.queries_failed = len(failed_queries)
+    summary.partial = bool(troubled or summary.errors)
 
     tenants = tuple(tenant.name for tenant in active_tenants) if include_workday else ()
     _attach_coverage(summary, plan, jobspy_observations, workday_observations, tenants)
@@ -362,5 +430,7 @@ async def run_ingestion(
         upserted=summary.upserted,
         by_source=summary.by_source,
         errors=summary.errors,
+        partial=summary.partial,
+        queries_failed=summary.queries_failed,
     )
     return summary
