@@ -176,6 +176,27 @@ class ScoreSummary:
     token_usage: TokenUsage | None = field(default=None)
 
 
+def _attach_usage_summary(summary: ScoreSummary, client: Any) -> None:
+    """Keep the scoring client's totals and emit one log line. No prompt text."""
+    usage = getattr(client, "usage", None)
+    if not isinstance(usage, TokenUsage):
+        summary.token_usage = None
+        return
+    summary.token_usage = usage
+    log.info("openai_usage_summary", **usage.log_fields())
+
+
+def _emit_usage_summary(summary: ScoreSummary, client: Any) -> None:
+    """Log usage once. A logging failure must not replace the caller's exception."""
+    try:
+        _attach_usage_summary(summary, client)
+    except Exception as exc:
+        try:
+            log.warning("openai_usage_summary_failed", error=str(exc)[:200])
+        except Exception:
+            return
+
+
 @dataclass(frozen=True, slots=True)
 class _JobOutcome:
     kind: str  # staged | filtered_out | error
@@ -935,8 +956,42 @@ class Scorer:
         embedder: Embedder | None = None,
     ) -> ScoreSummary:
         """Score discovered jobs with bounded concurrency; optional early-stop."""
+        summary = ScoreSummary()
+        # The body may replace a missing client. The summary must use that object.
+        bound: list[LLMClient | None] = [client]
+        try:
+            return await self._score_pending_body(
+                summary,
+                bound,
+                client=client,
+                profile=profile,
+                limit=limit,
+                generate_outreach=generate_outreach,
+                generate_cover_letter=generate_cover_letter,
+                concurrency=concurrency,
+                stop_after_staged=stop_after_staged,
+                embedder=embedder,
+            )
+        finally:
+            _emit_usage_summary(summary, bound[0])
+
+    async def _score_pending_body(
+        self,
+        summary: ScoreSummary,
+        bound: list[LLMClient | None],
+        *,
+        client: LLMClient | None,
+        profile: Profile | None,
+        limit: int | None,
+        generate_outreach: bool | None,
+        generate_cover_letter: bool | None,
+        concurrency: int | None,
+        stop_after_staged: int | None,
+        embedder: Embedder | None,
+    ) -> ScoreSummary:
         await init_db()
         client = client or self._resolve_client()
+        bound[0] = client
         profile = profile or self._resolve_profile()
         settings = get_settings()
         if generate_outreach is None:
@@ -944,7 +999,6 @@ class Scorer:
         if generate_cover_letter is None:
             generate_cover_letter = settings.tier_one_drafts_enabled
         workers = max(1, concurrency if concurrency is not None else settings.scorer_concurrency)
-        summary = ScoreSummary()
         active_embedder = embedder
         if settings.vector_gate_enabled and active_embedder is None:
             active_embedder = build_embedder()
@@ -956,7 +1010,6 @@ class Scorer:
 
         if not jobs:
             log.info("score_pending_empty")
-            summary.token_usage = getattr(client, "usage", None)
             return summary
 
         async with session_scope() as session:
@@ -1041,8 +1094,6 @@ class Scorer:
                 summary.staged += 1
             else:
                 summary.filtered_out += 1
-
-        summary.token_usage = getattr(client, "usage", None)
 
         log.info(
             "score_pending_complete",

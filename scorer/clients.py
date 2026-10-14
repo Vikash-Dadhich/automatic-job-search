@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import structlog
@@ -24,26 +24,71 @@ log = structlog.get_logger(__name__)
 
 @dataclass
 class TokenUsage:
-    """Accumulated provider usage for one client instance (one scoring run)."""
+    """Accumulated provider usage for one client instance (one scoring run).
 
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    cached_tokens: int = 0
+    Token fields stay ``None`` until a response actually reports them. Zero
+    means the API sent zero. Counters are this process's own observations.
+    """
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    request_attempts: int = 0
+    successful_responses: int = 0
+    empty_response_retries: int = 0
+    api_exceptions: int = 0
+    transient_retries: int = 0
     total_calls: int = 0
+    models: dict[str, int] = field(default_factory=dict)
 
     def __iadd__(self, other: TokenUsage) -> TokenUsage:
-        self.prompt_tokens += other.prompt_tokens
-        self.completion_tokens += other.completion_tokens
-        self.cached_tokens += other.cached_tokens
+        self.prompt_tokens = _add_measured(self.prompt_tokens, other.prompt_tokens)
+        self.completion_tokens = _add_measured(self.completion_tokens, other.completion_tokens)
+        self.cached_tokens = _add_measured(self.cached_tokens, other.cached_tokens)
+        self.reasoning_tokens = _add_measured(self.reasoning_tokens, other.reasoning_tokens)
+        self.request_attempts += other.request_attempts
+        self.successful_responses += other.successful_responses
+        self.empty_response_retries += other.empty_response_retries
+        self.api_exceptions += other.api_exceptions
+        self.transient_retries += other.transient_retries
         self.total_calls += other.total_calls
+        for model, count in other.models.items():
+            self.models[model] = self.models.get(model, 0) + count
         return self
 
+    def log_fields(self) -> dict[str, Any]:
+        """Numbers and model ids only. No prompts or job text."""
+        return {
+            "models": dict(self.models),
+            "request_attempts": self.request_attempts,
+            "successful_responses": self.successful_responses,
+            "empty_response_retries": self.empty_response_retries,
+            "api_exceptions": self.api_exceptions,
+            "transient_retries": self.transient_retries,
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "completion_tokens": self.completion_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+        }
 
-def _as_int(value: Any) -> int:
+
+def _measured_int(value: Any) -> int | None:
+    """None stays missing. Zero stays zero. Non-numeric values stay missing."""
+    if value is None:
+        return None
     try:
-        return int(value or 0)
+        return int(value)
     except (TypeError, ValueError):
-        return 0
+        return None
+
+
+def _add_measured(current: int | None, value: int | None) -> int | None:
+    if value is None:
+        return current
+    if current is None:
+        return value
+    return current + value
 
 _RETRY_DELAY_RE = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s", re.IGNORECASE)
 _TRANSIENT_MARKERS = (
@@ -148,6 +193,7 @@ async def call_with_resilience(
     max_attempts: int,
     max_wait: float,
     label: str,
+    usage: TokenUsage | None = None,
 ) -> str:
     """Run attempt_fn(model) across candidate models, retrying transient errors.
 
@@ -180,6 +226,8 @@ async def call_with_resilience(
                         ),
                     )
                     break
+                if usage is not None:
+                    usage.transient_retries += 1
                 delay = _backoff_delay(attempt, exc, max_wait)
                 log.info(
                     "llm_transient_retry",
@@ -260,10 +308,18 @@ class AnthropicClient:
         usage = getattr(response, "usage", None)
         if usage is None:
             return
-        self._usage.prompt_tokens += _as_int(getattr(usage, "input_tokens", 0))
-        self._usage.completion_tokens += _as_int(getattr(usage, "output_tokens", 0))
-        self._usage.cached_tokens += _as_int(getattr(usage, "cache_read_input_tokens", 0))
+        self._usage.prompt_tokens = _add_measured(
+            self._usage.prompt_tokens, _measured_int(getattr(usage, "input_tokens", None))
+        )
+        self._usage.completion_tokens = _add_measured(
+            self._usage.completion_tokens, _measured_int(getattr(usage, "output_tokens", None))
+        )
+        self._usage.cached_tokens = _add_measured(
+            self._usage.cached_tokens,
+            _measured_int(getattr(usage, "cache_read_input_tokens", None)),
+        )
         self._usage.total_calls += 1
+        self._usage.successful_responses += 1
 
 
 class OpenAIClient:
@@ -314,16 +370,27 @@ class OpenAIClient:
                 kwargs["response_format"] = {"type": "json_object"}
             if candidate.startswith(("gpt-5", "o1", "o3", "o4")):
                 kwargs["reasoning_effort"] = "minimal"
-            response = await self._client.chat.completions.create(**kwargs)
-            self._record_openai_usage(response)
+
+            async def _create() -> Any:
+                self._usage.request_attempts += 1
+                self._usage.models[candidate] = self._usage.models.get(candidate, 0) + 1
+                try:
+                    response = await self._client.chat.completions.create(**kwargs)
+                except Exception:
+                    self._usage.api_exceptions += 1
+                    raise
+                self._record_openai_usage(response)
+                return response
+
+            response = await _create()
             choice = response.choices[0]
             text = (getattr(choice.message, "content", None) or "").strip()
             if text:
                 return text
             # Reasoning models can spend the whole budget and return no text.
+            self._usage.empty_response_retries += 1
             kwargs["max_completion_tokens"] = min(max_tokens * 3, 8192)
-            response = await self._client.chat.completions.create(**kwargs)
-            self._record_openai_usage(response)
+            response = await _create()
             choice = response.choices[0]
             text = (getattr(choice.message, "content", None) or "").strip()
             if not text:
@@ -336,6 +403,7 @@ class OpenAIClient:
             max_attempts=settings.llm_max_attempts,
             max_wait=settings.llm_retry_max_wait_s,
             label="openai",
+            usage=self._usage,
         )
 
     @property
@@ -343,14 +411,33 @@ class OpenAIClient:
         return self._usage
 
     def _record_openai_usage(self, response: Any) -> None:
+        self._usage.successful_responses += 1
+        self._usage.total_calls += 1
         usage = getattr(response, "usage", None)
         if usage is None:
             return
-        self._usage.prompt_tokens += _as_int(getattr(usage, "prompt_tokens", 0))
-        self._usage.completion_tokens += _as_int(getattr(usage, "completion_tokens", 0))
-        details = getattr(usage, "prompt_tokens_details", None)
-        self._usage.cached_tokens += _as_int(getattr(details, "cached_tokens", 0))
-        self._usage.total_calls += 1
+        prompt = _measured_int(getattr(usage, "prompt_tokens", None))
+        if prompt is None:
+            prompt = _measured_int(getattr(usage, "input_tokens", None))
+        completion = _measured_int(getattr(usage, "completion_tokens", None))
+        if completion is None:
+            completion = _measured_int(getattr(usage, "output_tokens", None))
+        prompt_details = getattr(usage, "prompt_tokens_details", None)
+        if prompt_details is None:
+            prompt_details = getattr(usage, "input_tokens_details", None)
+        completion_details = getattr(usage, "completion_tokens_details", None)
+        if completion_details is None:
+            completion_details = getattr(usage, "output_tokens_details", None)
+        self._usage.prompt_tokens = _add_measured(self._usage.prompt_tokens, prompt)
+        self._usage.completion_tokens = _add_measured(self._usage.completion_tokens, completion)
+        self._usage.cached_tokens = _add_measured(
+            self._usage.cached_tokens,
+            _measured_int(getattr(prompt_details, "cached_tokens", None)),
+        )
+        self._usage.reasoning_tokens = _add_measured(
+            self._usage.reasoning_tokens,
+            _measured_int(getattr(completion_details, "reasoning_tokens", None)),
+        )
 
 
 def system_blocks_to_text(system_blocks: list[dict[str, Any]]) -> str:
@@ -502,10 +589,20 @@ class GeminiClient:
         meta = getattr(response, "usage_metadata", None)
         if meta is None:
             return
-        self._usage.prompt_tokens += _as_int(getattr(meta, "prompt_token_count", 0))
-        self._usage.completion_tokens += _as_int(getattr(meta, "candidates_token_count", 0))
-        self._usage.cached_tokens += _as_int(getattr(meta, "cached_content_token_count", 0))
+        self._usage.prompt_tokens = _add_measured(
+            self._usage.prompt_tokens,
+            _measured_int(getattr(meta, "prompt_token_count", None)),
+        )
+        self._usage.completion_tokens = _add_measured(
+            self._usage.completion_tokens,
+            _measured_int(getattr(meta, "candidates_token_count", None)),
+        )
+        self._usage.cached_tokens = _add_measured(
+            self._usage.cached_tokens,
+            _measured_int(getattr(meta, "cached_content_token_count", None)),
+        )
         self._usage.total_calls += 1
+        self._usage.successful_responses += 1
 
 
 def _finish_reason(response: Any) -> str | None:
