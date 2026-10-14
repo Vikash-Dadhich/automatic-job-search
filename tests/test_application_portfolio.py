@@ -484,7 +484,7 @@ async def test_pipeline_applies_only_allocated_staged_jobs(
         seen.append([item for item in values if isinstance(item, int)])
         return await apply_pending(applicator=spy, job_ids=seen[-1])
 
-    async def noop() -> None:
+    async def noop(**_kwargs: object) -> None:
         return None
 
     import orchestrator.pipeline as pipeline_mod
@@ -706,7 +706,7 @@ async def test_pipeline_apply_receives_only_persisted_ids(
         seen.append([item for item in values if isinstance(item, int)])
         return object()
 
-    async def noop() -> None:
+    async def noop(**_kwargs: object) -> None:
         return None
 
     import orchestrator.pipeline as pipeline_mod

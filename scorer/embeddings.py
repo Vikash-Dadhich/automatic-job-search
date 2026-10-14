@@ -16,7 +16,15 @@ import structlog
 
 from config.settings import PROJECT_ROOT, get_settings
 from core.db import Job
-from scorer.clients import LLMBillingError, is_permanent_account_error, is_transient
+from scorer.clients import (
+    LLMBillingError,
+    OpenAIRequestBlocked,
+    _embedding_usage,
+    get_openai_request_ledger,
+    is_permanent_account_error,
+    is_transient,
+    remember_openai_attempt,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -24,8 +32,12 @@ _MIN_EMBED_CHARS = 40
 _EMBED_ATTEMPTS = 3
 
 
+class EmbedInputLimitReached(Exception):
+    """The embedding input cap allowed no further inputs for this chunk."""
+
+
 class Embedder(Protocol):
-    """Batch embedder. Result length matches ``texts``."""
+    """Batch embedder. A short result means the input cap stopped the batch."""
 
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 
@@ -168,23 +180,57 @@ class OpenAIEmbedder:
         width = settings.vector_batch_size
         vectors: list[list[float]] = []
         for start in range(0, len(texts), width):
-            vectors.extend(await self._embed_chunk(texts[start : start + width]))
+            try:
+                vectors.extend(await self._embed_chunk(texts[start : start + width]))
+            except EmbedInputLimitReached:
+                break
         return vectors
 
     async def _embed_chunk(self, texts: list[str]) -> list[list[float]]:
         settings = get_settings()
+        ledger = get_openai_request_ledger()
+        payload = texts
         last_exc: BaseException | None = None
         for attempt in range(_EMBED_ATTEMPTS):
+            if attempt == 0:
+                allowed = await ledger.reserve_embed_inputs(len(texts))
+                if allowed <= 0:
+                    raise EmbedInputLimitReached()
+                payload = texts[:allowed]
+            else:
+                retry_allowed = await ledger.reserve_embed_inputs(len(payload))
+                if retry_allowed < len(payload):
+                    raise EmbedInputLimitReached() from last_exc
             try:
+                await ledger.reserve()
                 response = await self._client.embeddings.create(
                     model=settings.openai_embedding_model,
-                    input=texts,
+                    input=payload,
                     dimensions=settings.vector_dimensions,
                 )
-                return _vectors_from_response(response, expected=len(texts))
+                present, reported_model, prompt = _embedding_usage(response)
+                await remember_openai_attempt(
+                    operation="embedding",
+                    model=reported_model or settings.openai_embedding_model,
+                    success=True,
+                    transient_retry=attempt > 0,
+                    usage_present=present,
+                    prompt_tokens=prompt,
+                )
+                return _vectors_from_response(response, expected=len(payload))
+            except (OpenAIRequestBlocked, EmbedInputLimitReached):
+                raise
             except Exception as exc:
                 last_exc = exc
+                await remember_openai_attempt(
+                    operation="embedding",
+                    model=settings.openai_embedding_model,
+                    success=False,
+                    transient_retry=attempt > 0,
+                    api_exception=True,
+                )
                 if is_permanent_account_error(exc):
+                    await ledger.halt()
                     raise LLMBillingError(f"vector gate: account cannot embed ({exc})") from exc
                 if attempt == _EMBED_ATTEMPTS - 1 or not is_transient(exc):
                     raise

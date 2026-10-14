@@ -30,14 +30,18 @@ from scorer.clients import (
     GeminiClient,
     LLMBillingError,
     LLMClient,
+    LLMError,
     TokenUsage,
     build_llm_client,
+    get_openai_request_ledger,
+    is_openai_safety_error,
     is_permanent_account_error,
     system_blocks_to_text,
 )
 from scorer.cover_letter import generate_cover_letter as draft_cover_letter
 from scorer.embeddings import (
     Embedder,
+    EmbedInputLimitReached,
     build_embedder,
     clears_threshold,
     cosine,
@@ -152,6 +156,13 @@ def compute_tier(score: int, company: str, profile: Profile) -> Tier:
     if score >= settings.tier_two_min_score:
         return Tier.two
     return Tier.three
+
+
+class ScoringSafetyHalt(LLMError):
+    """Fit scoring stopped before further OpenAI calls. In-flight calls may finish."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"scoring_safety_halt: {reason}")
 
 
 def _status_for_tier(tier: Tier) -> Status:
@@ -305,11 +316,17 @@ async def _resolve_profile_vector(
         return digest, None
     try:
         vectors = await embedder.embed([text])
+    except EmbedInputLimitReached:
+        raise
     except Exception as exc:
+        if is_openai_safety_error(exc):
+            raise
         _log_embed_failure(exc)
         return digest, None
     width = settings.vector_dimensions
     if len(vectors) != 1 or len(vectors[0]) != width:
+        if get_openai_request_ledger().embed_capped:
+            raise EmbedInputLimitReached()
         log.warning("vector_gate_profile_mismatch")
         return digest, None
     save_profile_embedding(
@@ -424,20 +441,36 @@ async def _embed_texts(
     texts: list[str],
     embedder: Embedder | None,
 ) -> list[list[float]] | None:
+    """Embed ``texts``.
+
+    ``None`` is an ordinary failure and the caller may fail open. A short list
+    is the embedding input cap: only that prefix was sent. Billing and request
+    budget errors propagate.
+    """
     if embedder is None or not texts:
         return None
     try:
         vectors = await embedder.embed(texts)
+    except EmbedInputLimitReached:
+        return []
     except Exception as exc:
+        if is_openai_safety_error(exc):
+            raise
         _log_embed_failure(exc)
         return None
-    if len(vectors) != len(texts):
+    if len(vectors) > len(texts):
         log.warning(
             "vector_gate_embed_mismatch",
             expected=len(texts),
             got=len(vectors),
         )
         return None
+    if len(vectors) < len(texts):
+        log.info(
+            "vector_gate_embed_capped",
+            expected=len(texts),
+            got=len(vectors),
+        )
     return vectors
 
 
@@ -463,7 +496,10 @@ async def _reopen_vector_rejects(profile: Profile, embedder: Embedder | None) ->
     )
     profile_vector: list[float] | None = None
     if needs_profile:
-        digest, profile_vector = await _resolve_profile_vector(profile, embedder)
+        try:
+            digest, profile_vector = await _resolve_profile_vector(profile, embedder)
+        except EmbedInputLimitReached:
+            return
 
     for row in rows:
         vector = jd_vector(row, width, model=settings.openai_embedding_model)
@@ -599,11 +635,16 @@ async def _apply_vector_gate(
     digest = profile_hash(profile_embed_text(profile))
     profile_vector: list[float] | None = None
     profile_ready = False
+    embed_capped = False
 
     async def profile_vec() -> list[float] | None:
-        nonlocal digest, profile_vector, profile_ready
+        nonlocal digest, profile_vector, profile_ready, embed_capped
         if not profile_ready:
-            digest, profile_vector = await _resolve_profile_vector(profile, embedder)
+            try:
+                digest, profile_vector = await _resolve_profile_vector(profile, embedder)
+            except EmbedInputLimitReached:
+                embed_capped = True
+                profile_vector = None
             profile_ready = True
         return profile_vector
 
@@ -619,7 +660,7 @@ async def _apply_vector_gate(
 
     i = 0
     while i < len(ranked):
-        if budget is not None and len(accepted) >= budget:
+        if embed_capped or (budget is not None and len(accepted) >= budget):
             break
         job = ranked[i]
         if _hard_blocked(job, profile, cooldown):
@@ -641,6 +682,8 @@ async def _apply_vector_gate(
             continue
         if existing is not None:
             pvec = await profile_vec()
+            if embed_capped and pvec is None:
+                break
             if pvec is None:
                 errors += 1
                 accepted.append(job)
@@ -679,10 +722,16 @@ async def _apply_vector_gate(
                 break
 
         pvec = await profile_vec()
+        if embed_capped and pvec is None:
+            break
         vectors = await _embed_texts(texts, embedder) if pvec is not None else None
+        vector_count = 0 if vectors is None else len(vectors)
+        capped_batch = vectors is not None and vector_count < len(batch)
         processed = 0
         for offset, cand in enumerate(batch):
             if budget is not None and len(accepted) >= budget:
+                break
+            if capped_batch and offset >= vector_count:
                 break
             vector = None if vectors is None else vectors[offset]
             if pvec is None or vector is None or len(vector) != width:
@@ -698,6 +747,8 @@ async def _apply_vector_gate(
                     await accept_or_reject(cand, vector, score)
             processed += 1
         i += processed
+        if capped_batch:
+            break
 
     return accepted, len(ranked) - i, rejected, errors, recovered
 
@@ -830,7 +881,11 @@ class Scorer:
         generate_cover_letter: bool = True,
         cooldown_companies: set[str] | None = None,
     ) -> _JobOutcome:
-        """Score one job and persist; never raises (returns error outcome)."""
+        """Score one job and persist.
+
+        Ordinary failures return an error outcome. Billing and request-budget
+        errors propagate and do not mark the job ``Status.error``.
+        """
         try:
             evaluation = await self.score_job(
                 job,
@@ -924,6 +979,8 @@ class Scorer:
             await _record_career_intelligence(job.id, profile)
             return outcome
         except Exception as exc:
+            if is_openai_safety_error(exc):
+                raise
             log.warning("score_job_failed", job_id=job.id, error=str(exc))
             try:
                 if job.id is not None:
@@ -1003,7 +1060,14 @@ class Scorer:
         if settings.vector_gate_enabled and active_embedder is None:
             active_embedder = build_embedder()
         if settings.vector_gate_enabled:
-            await _reopen_vector_rejects(profile, active_embedder)
+            try:
+                await _reopen_vector_rejects(profile, active_embedder)
+            except EmbedInputLimitReached:
+                log.info("vector_gate_embed_capped", stage="reopen")
+            except Exception as exc:
+                if is_openai_safety_error(exc):
+                    raise ScoringSafetyHalt(type(exc).__name__) from exc
+                raise
 
         async with session_scope() as session:
             jobs = await get_jobs_by_status(session, Status.discovered, limit=limit)
@@ -1018,12 +1082,17 @@ class Scorer:
             )
 
         if settings.vector_gate_enabled:
-            gated = await _apply_vector_gate(
-                jobs,
-                profile,
-                cooldown_companies,
-                active_embedder,
-            )
+            try:
+                gated = await _apply_vector_gate(
+                    jobs,
+                    profile,
+                    cooldown_companies,
+                    active_embedder,
+                )
+            except Exception as exc:
+                if is_openai_safety_error(exc):
+                    raise ScoringSafetyHalt(type(exc).__name__) from exc
+                raise
             (
                 jobs,
                 deferred,
@@ -1048,23 +1117,39 @@ class Scorer:
         # Checked per job rather than per wave so stop_after_staged=2 never
         # pays for a full wave of 8 LLM calls.
         target_reached = asyncio.Event()
+        safety_stop = asyncio.Event()
+        safety_error: list[BaseException] = []
         staged_so_far = 0
 
         async def run_one(job: Job) -> _JobOutcome | None:
             nonlocal staged_so_far
-            if target_reached.is_set():
+            if target_reached.is_set() or safety_stop.is_set():
                 return None
             async with semaphore:
-                if target_reached.is_set():
+                if target_reached.is_set() or safety_stop.is_set():
                     return None
-                outcome = await self._score_and_persist(
-                    job,
-                    client=client,
-                    profile=profile,
-                    generate_outreach=generate_outreach,
-                    generate_cover_letter=generate_cover_letter,
-                    cooldown_companies=cooldown_companies,
-                )
+                try:
+                    outcome = await self._score_and_persist(
+                        job,
+                        client=client,
+                        profile=profile,
+                        generate_outreach=generate_outreach,
+                        generate_cover_letter=generate_cover_letter,
+                        cooldown_companies=cooldown_companies,
+                    )
+                except Exception as exc:
+                    if not is_openai_safety_error(exc):
+                        raise
+                    # Jobs already inside _score_and_persist keep running.
+                    # This flag only stops workers that have not started.
+                    safety_stop.set()
+                    if not safety_error:
+                        safety_error.append(exc)
+                    return _JobOutcome(
+                        kind="halted",
+                        job_id=job.id,
+                        detail=type(exc).__name__,
+                    )
             if outcome.kind == "staged":
                 staged_so_far += 1
                 if stop_after_staged is not None and staged_so_far >= stop_after_staged:
@@ -1074,7 +1159,7 @@ class Scorer:
         outcomes = await asyncio.gather(*[run_one(job) for job in jobs])
 
         for outcome in outcomes:
-            if outcome is None:
+            if outcome is None or outcome.kind == "halted":
                 summary.skipped += 1
                 continue
             if outcome.kind == "error":
@@ -1109,6 +1194,8 @@ class Scorer:
             concurrency=workers,
             stop_after_staged=stop_after_staged,
         )
+        if safety_error:
+            raise ScoringSafetyHalt(type(safety_error[0]).__name__) from safety_error[0]
         return summary
 
 

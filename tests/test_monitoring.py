@@ -134,7 +134,7 @@ async def test_pipeline_partial_when_a_stage_fails(
     async def fail() -> dict[str, int]:
         raise RuntimeError("score boom")
 
-    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda: ok("ingestion"))
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda **_k: ok("ingestion"))
     monkeypatch.setattr(pipeline_mod, "_score_pending", fail)
     monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: ok("other"))
     monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: ok("other"))
@@ -164,7 +164,7 @@ async def test_pipeline_failure_outside_a_stage_is_failed(
 ) -> None:
     del db_ready
 
-    async def ok() -> dict[str, int]:
+    async def ok(**_kwargs: object) -> dict[str, int]:
         return {}
 
     monkeypatch.setattr(pipeline_mod, "_run_ingestion", ok)
@@ -220,7 +220,7 @@ async def test_telemetry_failure_does_not_stop_the_pipeline(
 ) -> None:
     del db_ready
 
-    async def ok() -> dict[str, int]:
+    async def ok(**_kwargs: object) -> dict[str, int]:
         return {"scored": 1}
 
     async def explode(*_args: object, **_kwargs: object) -> int:

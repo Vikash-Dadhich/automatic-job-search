@@ -78,6 +78,53 @@ class Settings(BaseSettings):
         ge=1,
         description="Attempts per model for transient LLM errors (429/503/500)",
     )
+    openai_max_requests: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Max OpenAI HTTP attempts in this process, including retries and "
+            "empty-response follow-ups. None does not cap attempts. A billing "
+            "error still stops later attempts from starting."
+        ),
+    )
+    search_capacity: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Discovery queries one pipeline run plans. None plans every enabled "
+            "query. 1 is one planned query, not one HTTP request or one posting. "
+            "That query still runs on each configured JobSpy site and Workday tenant."
+        ),
+    )
+    ingest_posting_cap: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Postings one ingestion run may commit. None does not cap. "
+            "The count is successful upserts in this run, including filtered rows. "
+            "A duplicate already committed in the run does not count again. "
+            "A failed commit does not count. This does not limit how many rows "
+            "external sites fetch."
+        ),
+    )
+    role_classify_max_calls: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Role-classification model attempts per process. None does not cap. "
+            "Deterministic labels and stored labels do not count. "
+            "Each model attempt also reserves an OpenAI request."
+        ),
+    )
+    embed_max_inputs: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Embedding inputs sent to the API per process, across batches and "
+            "retries. None does not cap. Inputs past the cap are not sent and "
+            "are not given a guessed vector."
+        ),
+    )
     llm_retry_max_wait_s: float = Field(
         default=30.0,
         ge=0,

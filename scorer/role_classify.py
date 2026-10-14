@@ -9,7 +9,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from scorer.clients import LLMClient
+from config.settings import get_settings
+from scorer.clients import (
+    LLMClient,
+    get_openai_request_ledger,
+    pop_openai_operation,
+    push_openai_operation,
+)
 
 ROLE_CLASSIFIER_VERSION = "phase5-v4"
 
@@ -693,17 +699,24 @@ async def classify_role(
     )
     if structured_text:
         user = f"{user}\n{structured_text}"
+    if not await get_openai_request_ledger().reserve_role_call():
+        return _unknown(content_hash, "Role classification call limit reached.")
+    model_name = model if model is not None else get_settings().openai_scorer_model
+    token = push_openai_operation("role")
     try:
-        raw = await client.complete(
-            model=model or "role-classifier",
-            system_blocks=[{"type": "text", "text": _CLASSIFY_SYSTEM}],
-            user=user,
-            max_tokens=512,
-            temperature=0,
-            json_mode=True,
-        )
-    except Exception:
-        return _unknown(content_hash, "Classifier returned a label outside the taxonomy.")
+        try:
+            raw = await client.complete(
+                model=model_name,
+                system_blocks=[{"type": "text", "text": _CLASSIFY_SYSTEM}],
+                user=user,
+                max_tokens=512,
+                temperature=0,
+                json_mode=True,
+            )
+        except Exception:
+            return _unknown(content_hash, "Classifier returned a label outside the taxonomy.")
+    finally:
+        pop_openai_operation(token)
     parsed = _parse_model(raw, content_hash)
     if parsed.role_family == "UNKNOWN" and "outside the taxonomy" in parsed.role_evidence[0]:
         return parsed

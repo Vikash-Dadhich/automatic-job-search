@@ -521,7 +521,7 @@ async def test_pipeline_enriches_the_review_queue_and_apply_stays_on_staged(
         resume_ids.extend(row.id for row in rows if row.id is not None)
         return object()
 
-    async def noop() -> None:
+    async def noop(**_kwargs: object) -> None:
         return None
 
     monkeypatch.setattr("orchestrator.pipeline.generate_suggestions_for_job", fake_suggest)

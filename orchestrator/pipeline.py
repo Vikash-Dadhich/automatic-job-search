@@ -20,6 +20,7 @@ from config.diagnostics import effective_baseline, write_effective_baseline
 from config.settings import get_settings
 from resume.compiler import prepare_pending
 from resume.diff import generate_suggestions_for_job
+from scorer.clients import emit_openai_run_usage
 from scorer.engine import score_pending
 from scraper.ingest import run_ingestion
 
@@ -224,6 +225,7 @@ async def run_pipeline(
         await _safe_close_run(run_id, summary, status="failed")
         raise
     finally:
+        await emit_openai_run_usage()
         _current_run.reset(token)
 
 
@@ -285,12 +287,28 @@ async def _run_opened_pipeline(
     )
     log.info("monitoring_run_started", run_id=run_id)
 
-    await _run_stage(summary, "ingestion", _run_ingestion)
+    await _run_stage(summary, "ingestion", _ingest_stage)
     await _run_stage(summary, "scoring", _score_pending)
     await _run_stage(summary, "shortlist", _shortlist_stage)
     await _run_stage(summary, "resume", _prepare_shortlisted_resumes)
 
-    if do_suggest:
+    if _scoring_halted(summary):
+        # Local shortlist and resume rows are already finalized above.
+        # Do not continue into Telegram, browser apply, or more model calls.
+        log.info("pipeline_outbound_skipped", reason="scoring_safety_halt")
+        for name in (
+            "suggest_generate",
+            "suggest_send",
+            "benchmark",
+            "prep",
+            "portfolio",
+            "apply",
+            "reviews",
+            "outcome_prompts",
+            "alerts",
+        ):
+            await _note_skipped(summary, name)
+    elif do_suggest:
         await _run_stage(summary, "suggest_generate", _suggest_stage)
         if do_suggest_send:
             await _run_stage(summary, "suggest_send", _send_pending_suggestions)
@@ -300,40 +318,41 @@ async def _run_opened_pipeline(
         await _note_skipped(summary, "suggest_generate")
         await _note_skipped(summary, "suggest_send")
 
-    if do_benchmark:
-        await _run_stage(summary, "benchmark", _benchmark_stage)
-    else:
-        await _note_skipped(summary, "benchmark")
+    if not _scoring_halted(summary):
+        if do_benchmark:
+            await _run_stage(summary, "benchmark", _benchmark_stage)
+        else:
+            await _note_skipped(summary, "benchmark")
 
-    if do_prep:
-        await _run_stage(summary, "prep", _prep_stage)
-    else:
-        await _note_skipped(summary, "prep")
-        log.info("pipeline_stage_skipped", stage="prep")
+        if do_prep:
+            await _run_stage(summary, "prep", _prep_stage)
+        else:
+            await _note_skipped(summary, "prep")
+            log.info("pipeline_stage_skipped", stage="prep")
 
-    if do_apply:
-        await _run_stage(summary, "portfolio", _portfolio_stage)
-        await _run_stage(summary, "apply", _apply_allocated)
-    else:
-        await _note_skipped(summary, "portfolio")
-        await _note_skipped(summary, "apply")
-        log.info("pipeline_stage_skipped", stage="portfolio")
-        log.info("pipeline_stage_skipped", stage="apply")
+        if do_apply:
+            await _run_stage(summary, "portfolio", _portfolio_stage)
+            await _run_stage(summary, "apply", _apply_allocated)
+        else:
+            await _note_skipped(summary, "portfolio")
+            await _note_skipped(summary, "apply")
+            log.info("pipeline_stage_skipped", stage="portfolio")
+            log.info("pipeline_stage_skipped", stage="apply")
 
-    if do_reviews:
-        await _run_stage(summary, "reviews", _send_pending_reviews)
-        await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
-        await _run_stage(summary, "alerts", _send_pending_alerts)
-    else:
-        await _note_skipped(summary, "reviews")
-        await _note_skipped(summary, "outcome_prompts")
-        await _note_skipped(summary, "alerts")
-        log.info("pipeline_stage_skipped", stage="reviews")
-        log.info("pipeline_stage_skipped", stage="outcome_prompts")
-        log.info("pipeline_stage_skipped", stage="alerts")
+        if do_reviews:
+            await _run_stage(summary, "reviews", _send_pending_reviews)
+            await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
+            await _run_stage(summary, "alerts", _send_pending_alerts)
+        else:
+            await _note_skipped(summary, "reviews")
+            await _note_skipped(summary, "outcome_prompts")
+            await _note_skipped(summary, "alerts")
+            log.info("pipeline_stage_skipped", stage="reviews")
+            log.info("pipeline_stage_skipped", stage="outcome_prompts")
+            log.info("pipeline_stage_skipped", stage="alerts")
 
     summary.duration_ms = int((time.perf_counter() - started) * 1000)
-    status = "partial" if summary.stage_errors else "succeeded"
+    status = _pipeline_status(summary)
     await _safe_close_run(run_id, summary, status=status)
     log.info(
         "pipeline_complete",
@@ -363,6 +382,28 @@ async def _note_skipped(summary: PipelineSummary, name: str) -> None:
         await record_skipped_stage(run_id, name)
     except Exception as exc:
         log.warning("monitoring_stage_record_failed", stage=name, error=str(exc)[:200])
+
+
+async def _ingest_stage() -> Any:
+    """Plan only ``settings.search_capacity`` queries. ``None`` plans every query."""
+    return await _run_ingestion(search_capacity=get_settings().search_capacity)
+
+
+def _scoring_halted(summary: PipelineSummary) -> bool:
+    """True when scoring stopped for billing or the OpenAI request cap."""
+    return str(summary.stage_errors.get("scoring", "")).startswith("scoring_safety_halt:")
+
+
+def _pipeline_status(summary: PipelineSummary) -> str:
+    """Full success, a stage failure, or a scoring safety halt.
+
+    A safety halt is ``failed``. Other stage errors stay ``partial``.
+    """
+    if _scoring_halted(summary):
+        return "failed"
+    if summary.stage_errors:
+        return "partial"
+    return "succeeded"
 
 
 async def _run_stage(

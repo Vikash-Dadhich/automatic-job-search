@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import structlog
 
 from config.profile import Profile, load_profile
+from config.settings import get_settings
 from config.targets import Targets, load_targets
 from core.db import Job, Status, get_job_by_source_id, init_db, session_scope, upsert_job
 from scorer.clients import LLMClient
@@ -293,8 +294,11 @@ async def run_ingestion(
 ) -> IngestSummary:
     """Run one full discovery cycle and persist results.
 
-    ``search_capacity`` is how many query executions to run. ``None`` runs every
-    enabled discovery query once. Allocation does not look at fit scores.
+    ``search_capacity`` is how many discovery queries to plan. ``None`` runs every
+    enabled query once. One query is not one HTTP request or one posting: JobSpy
+    still searches each configured site, and Workday still searches each tenant.
+    ``INGEST_POSTING_CAP`` limits how many of those rows this run commits. It
+    does not stop the sites from returning more. Allocation does not look at fit.
     """
     await init_db()
     targets = targets or load_targets()
@@ -311,9 +315,11 @@ async def run_ingestion(
     active_tenants = targets.active_workday_tenants()
     role_client = await _load_role_client()
     seen: set[tuple[str, str]] = set()
+    committed = 0
     persist_lock = asyncio.Lock()
 
     async def _accept(label: str, postings: list[RawPosting]) -> bool:
+        nonlocal committed
         if not postings:
             return True
         async with persist_lock:
@@ -327,19 +333,34 @@ async def run_ingestion(
             if not fresh:
                 summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
                 return True
+            cap = get_settings().ingest_posting_cap
+            to_save = fresh
+            if cap is not None:
+                room = cap - committed
+                if room <= 0:
+                    log.info("ingest_posting_cap_reached", cap=cap, skipped=len(fresh))
+                    return True
+                if len(fresh) > room:
+                    log.info(
+                        "ingest_posting_cap_reached",
+                        cap=cap,
+                        skipped=len(fresh) - room,
+                    )
+                    to_save = fresh[:room]
             try:
-                counts = await _persist_postings(fresh, profile, role_client)
+                counts = await _persist_postings(to_save, profile, role_client)
             except Exception as exc:
                 safe = redact_error(str(exc))
                 summary.errors.append(f"{label}: {safe}")
                 log.warning("ingestion_persist_failed", source=label, error=safe)
                 return False
-            for posting in fresh:
+            for posting in to_save:
                 seen.add((posting.source.value, posting.external_id))
+            committed += counts.upserted
             summary.discovered += counts.discovered
             summary.filtered_out += counts.filtered_out
             summary.upserted += counts.upserted
-            summary.fetched += len(fresh)
+            summary.fetched += len(to_save)
             summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
             return True
 

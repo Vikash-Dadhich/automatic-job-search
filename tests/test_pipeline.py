@@ -25,7 +25,7 @@ async def test_pipeline_order_and_aggregation(
     del db_ready
     order: list[str] = []
 
-    async def fake_ingestion() -> _FakeSummary:
+    async def fake_ingestion(**_kwargs: object) -> _FakeSummary:
         order.append("ingestion")
         return _FakeSummary("ingestion")
 
@@ -145,7 +145,7 @@ async def test_pipeline_skips_apply_and_reviews(
         order.append(name)
         return _FakeSummary(name)
 
-    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda: track("ingestion"))
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda **_k: track("ingestion"))
     monkeypatch.setattr(pipeline_mod, "_score_pending", lambda: track("scoring"))
     monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: track("shortlist"))
     monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: track("resume"))
@@ -201,7 +201,7 @@ async def test_pipeline_stage_isolation(
         order.append("scoring")
         raise RuntimeError("score boom")
 
-    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda: ok("ingestion"))
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda **_k: ok("ingestion"))
     monkeypatch.setattr(pipeline_mod, "_score_pending", fail_score)
     monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: ok("shortlist"))
     monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: ok("resume"))
@@ -251,6 +251,88 @@ async def test_pipeline_stage_isolation(
     assert "score boom" in summary.stage_errors["scoring"]
     assert "resume" in summary.stages
     assert not summary.ok
+
+
+async def test_scoring_safety_halt_skips_outbound_stages_when_reviews_are_on(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production leaves reviews on. A scoring halt must not reach Telegram."""
+    del db_ready
+    outbound: list[str] = []
+
+    async def ingest(**_kwargs: object) -> _FakeSummary:
+        return _FakeSummary("ingestion")
+
+    async def halt(**_kwargs: object) -> _FakeSummary:
+        from scorer.engine import ScoringSafetyHalt
+
+        raise ScoringSafetyHalt("OpenAIBudgetExceeded")
+
+    async def local(name: str) -> _FakeSummary:
+        return _FakeSummary(name)
+
+    def outbound_stage(name: str):
+        async def _run(*_args: object, **_kwargs: object) -> _FakeSummary:
+            outbound.append(name)
+            raise AssertionError(name)
+
+        return _run
+
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", ingest)
+    monkeypatch.setattr(pipeline_mod, "_score_pending", halt)
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: local("shortlist"))
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: local("resume"))
+    monkeypatch.setattr(
+        pipeline_mod,
+        "_generate_suggestions_stage",
+        outbound_stage("suggest_generate"),
+    )
+    monkeypatch.setattr(pipeline_mod, "_send_pending_suggestions", outbound_stage("suggest_send"))
+    monkeypatch.setattr(pipeline_mod, "_benchmark_tier_one_stage", outbound_stage("benchmark"))
+    monkeypatch.setattr(pipeline_mod, "_send_prep_pack", outbound_stage("prep"))
+    monkeypatch.setattr(pipeline_mod, "_portfolio_stage", outbound_stage("portfolio"))
+    monkeypatch.setattr(pipeline_mod, "_apply_pending", outbound_stage("apply"))
+    monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", outbound_stage("reviews"))
+    monkeypatch.setattr(pipeline_mod, "_send_outcome_prompts", outbound_stage("outcome_prompts"))
+    monkeypatch.setattr(pipeline_mod, "_send_pending_alerts", outbound_stage("alerts"))
+    events: list[str] = []
+
+    def _record(event: str, **_kwargs: object) -> None:
+        events.append(event)
+
+    monkeypatch.setattr("scorer.clients.log.info", _record)
+
+    summary = await run_pipeline(
+        enable_apply=True,
+        enable_reviews=True,
+        enable_prep_pack=True,
+        enable_suggestions=True,
+        enable_benchmark=True,
+    )
+    assert outbound == []
+    assert summary.stage_errors["scoring"].startswith("scoring_safety_halt:")
+    assert "shortlist" in summary.stages
+    assert "resume" in summary.stages
+    for name in (
+        "suggest_generate",
+        "suggest_send",
+        "benchmark",
+        "prep",
+        "portfolio",
+        "apply",
+        "reviews",
+        "outcome_prompts",
+        "alerts",
+    ):
+        assert name in summary.skipped
+        assert name not in summary.stages
+    assert not summary.ok
+    assert "openai_run_usage" in events
+    from orchestrator.monitoring import list_pipeline_runs
+
+    runs = await list_pipeline_runs()
+    assert runs[0].status == "failed"
 
 
 async def test_pipeline_resume_uses_the_review_queue(monkeypatch: pytest.MonkeyPatch) -> None:

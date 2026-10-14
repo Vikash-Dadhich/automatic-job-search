@@ -1,0 +1,80 @@
+name: Bounded pipeline trial
+
+# Manual trial only. This file does not run on a schedule and does not replace
+# the production workflow. A second dispatch waits; it does not cancel the
+# active trial. One discovery query can still contact every configured job site.
+# An in-flight OpenAI request can still be billed. estimated_usd is not a cap.
+# Before any dispatch, set an OpenAI hard spend limit. A spend alert only
+# notifies; it does not stop traffic.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full reviewed commit SHA. The checkout must match it.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-trial
+  cancel-in-progress: false
+
+jobs:
+  run-trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the reviewed commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          SELECTED_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          printf 'trial_ref=%s\n' "$SELECTED_REF"
+          printf 'trial_sha=%s\n' "$sha"
+          if [ "$sha" != "$EXPECTED_SHA" ]; then
+            echo "Checkout does not match the reviewed trial commit."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run bounded trial
+        run: uv run python main.py run-once
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///storage/trial.db
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INTERNSHIP_ONLY: "true"
+          ENABLE_APPLY: "false"
+          ENABLE_BENCHMARK: "false"
+          ENABLE_LINKEDIN_SCRAPE: "false"
+          ENABLE_REVIEWS: "false"
+          ENABLE_PREP_PACK: "false"
+          ENABLE_SUGGESTIONS: "false"
+          TIER_ONE_DRAFTS_ENABLED: "false"
+          SEARCH_CAPACITY: "1"
+          INGEST_POSTING_CAP: "8"
+          ROLE_CLASSIFY_MAX_CALLS: "0"
+          EMBED_MAX_INPUTS: "8"
+          SCORE_BUDGET: "3"
+          SCORER_CONCURRENCY: "1"
+          LLM_MAX_ATTEMPTS: "1"
+          OPENAI_MAX_REQUESTS: "12"
+          TIMEZONE: America/Los_Angeles
+          LLM_PROVIDER: openai
+          OPENAI_SCORER_MODEL: gpt-5-mini
+          OPENAI_WRITER_MODEL: gpt-5-mini

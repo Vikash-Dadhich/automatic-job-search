@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from config.profile import Profile
 from core.db import Job
 from core.token_optimizer import cache_block, minify_job
-from scorer.clients import LLMClient
+from scorer.clients import LLMClient, pop_openai_operation, push_openai_operation
 
 FIT_VERSION = "phase6-v2"
 _MIN_JD_CHARS = 80
@@ -327,14 +327,18 @@ async def evaluate_fit(
         return cached
     if client is None:
         return _unavailable(job, profile, "Fit model is unavailable.")
-    raw = await client.complete(
-        model=model,
-        system_blocks=build_fit_system_blocks(profile),
-        user=build_fit_user(job),
-        max_tokens=max_tokens,
-        temperature=0.0,
-        json_mode=True,
-    )
+    token = push_openai_operation("fit")
+    try:
+        raw = await client.complete(
+            model=model,
+            system_blocks=build_fit_system_blocks(profile),
+            user=build_fit_user(job),
+            max_tokens=max_tokens,
+            temperature=0.0,
+            json_mode=True,
+        )
+    finally:
+        pop_openai_operation(token)
     parsed = parse_fit(raw, job, profile)
     if parsed is None:
         return _unavailable(job, profile, "Fit model returned an unusable result.")

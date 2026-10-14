@@ -11,6 +11,7 @@ from config.profile import load_profile
 from config.settings import get_settings
 from config.targets import load_targets
 from core.db import init_db, reset_engine
+from scorer.clients import reset_openai_request_ledger
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +26,14 @@ def _disable_vector_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep scoring offline unless a test opts into the embedding gate."""
     monkeypatch.setenv("VECTOR_GATE_ENABLED", "false")
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_openai_request_ledger_between_tests() -> Iterator[None]:
+    """A billing halt is process-wide. Keep it inside the test that set it."""
+    reset_openai_request_ledger()
+    yield
+    reset_openai_request_ledger()
 
 
 @pytest.fixture(autouse=True)
