@@ -469,6 +469,54 @@ async def test_fit_reject_reasons_stay_stable(
     assert events == [FIT_UNUSABLE_SCHEMA, FIT_UNUSABLE_FIELD, FIT_UNUSABLE_GROUNDING]
 
 
+async def test_invalid_field_logs_the_field_name_only(
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    def _record(event: str, **kwargs: object) -> None:
+        if event == "fit_unusable":
+            events.append(kwargs)
+
+    monkeypatch.setattr("scorer.fit.log.info", _record)
+    job = _job()
+    bad_confidence = json.loads(_payload(40))
+    bad_confidence["confidence"] = "certain"
+    confidence = await evaluate_fit(
+        job,
+        profile,
+        _Client(json.dumps(bad_confidence)),  # type: ignore[arg-type]
+        model="gpt-5-mini",
+        max_tokens=128,
+    )
+    bad_judgment = json.loads(_payload(40))
+    bad_judgment["dimensions"]["SKILLS_MATCH"]["judgment"] = "partial"
+    judgment = await evaluate_fit(
+        job,
+        profile,
+        _Client(json.dumps(bad_judgment)),  # type: ignore[arg-type]
+        model="gpt-5-mini",
+        max_tokens=128,
+    )
+    assert confidence.available is False
+    assert confidence.score is None
+    assert judgment.available is False
+    assert judgment.score is None
+    assert events == [
+        {"job_id": job.id, "reason": FIT_UNUSABLE_FIELD, "field": "confidence"},
+        {
+            "job_id": job.id,
+            "reason": FIT_UNUSABLE_FIELD,
+            "field": "judgment",
+            "dimension": "SKILLS_MATCH",
+        },
+    ]
+    logged = str(events)
+    assert "certain" not in logged
+    assert "partial" not in logged
+
+
 def test_fit_blocks_include_the_profile(profile: Profile) -> None:
     blocks = build_fit_system_blocks(profile)
     assert profile.skills[0] in blocks[0]["text"]

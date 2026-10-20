@@ -235,7 +235,7 @@ def _legacy(data: dict[str, Any], job: Job, profile: Profile) -> FitDecision | N
 
 def parse_fit(text: str, job: Job, profile: Profile) -> FitDecision | None:
     """Parse a fit payload. None means the output is not usable."""
-    decision, _reason = _parse_fit_result(text, job, profile)
+    decision, _reason, _detail = _parse_fit_result(text, job, profile)
     return decision
 
 
@@ -243,39 +243,39 @@ def _parse_fit_result(
     text: str,
     job: Job,
     profile: Profile,
-) -> tuple[FitDecision | None, str | None]:
-    """Return a decision, or None plus a stable reason code. No model text."""
+) -> tuple[FitDecision | None, str | None, dict[str, str]]:
+    """Return a decision, or None plus a reason and a field label. No model text."""
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE).strip()
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None, FIT_UNUSABLE_JSON
+        return None, FIT_UNUSABLE_JSON, {}
     if not isinstance(data, dict):
-        return None, FIT_UNUSABLE_JSON
+        return None, FIT_UNUSABLE_JSON, {}
     legacy = _legacy(data, job, profile)
     if legacy is not None:
-        return legacy, None
+        return legacy, None, {}
     if "s" in data and "fit_score" not in data:
-        return None, FIT_UNUSABLE_FIELD
+        return None, FIT_UNUSABLE_FIELD, {"field": "legacy_score"}
     try:
         payload = _FitPayload.model_validate(data)
     except ValidationError:
-        return None, FIT_UNUSABLE_SCHEMA
+        return None, FIT_UNUSABLE_SCHEMA, {}
     if payload.confidence not in _CONFIDENCE:
-        return None, FIT_UNUSABLE_FIELD
+        return None, FIT_UNUSABLE_FIELD, {"field": "confidence"}
     if set(payload.dimensions) != set(DIMENSIONS):
-        return None, FIT_UNUSABLE_SCHEMA
-    for item in payload.dimensions.values():
+        return None, FIT_UNUSABLE_SCHEMA, {}
+    for name, item in payload.dimensions.items():
         if item.judgment not in _JUDGMENTS:
-            return None, FIT_UNUSABLE_FIELD
+            return None, FIT_UNUSABLE_FIELD, {"field": "judgment", "dimension": name}
     corpus = f"{fit_context_block(profile)}\n{job.description_clean or ''}\n{job.title or ''}"
     strengths = _ground(_lines(payload.strengths), corpus)
     gaps = _ground(_lines(payload.gaps), corpus)
     evidence = _ground(_lines(payload.evidence), corpus)
     if _lines(payload.strengths) and not strengths and not evidence:
-        return None, FIT_UNUSABLE_GROUNDING
+        return None, FIT_UNUSABLE_GROUNDING, {}
     return (
         FitDecision(
             available=True,
@@ -292,6 +292,7 @@ def _parse_fit_result(
             profile_hash=profile_fit_hash(profile),
         ),
         None,
+        {},
     )
 
 
@@ -361,8 +362,13 @@ async def evaluate_fit(
         )
     finally:
         pop_openai_operation(token)
-    parsed, reason = _parse_fit_result(raw, job, profile)
+    parsed, reason, detail = _parse_fit_result(raw, job, profile)
     if parsed is None:
-        log.info("fit_unusable", job_id=job.id, reason=reason or FIT_UNUSABLE_SCHEMA)
+        log.info(
+            "fit_unusable",
+            job_id=job.id,
+            reason=reason or FIT_UNUSABLE_SCHEMA,
+            **detail,
+        )
         return _unavailable(job, profile, "Fit model returned an unusable result.")
     return parsed
