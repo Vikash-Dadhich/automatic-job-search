@@ -388,6 +388,75 @@ def _chat_usage(
     return True, response_id, prompt, cached, completion, reasoning
 
 
+_OPENAI_FINISH_REASONS = frozenset(
+    {"stop", "length", "content_filter", "tool_calls", "function_call", "refusal"}
+)
+
+
+def _openai_message_text(choice: Any) -> str:
+    """Visible chat text. Missing or whitespace-only content is empty."""
+    message = getattr(choice, "message", None)
+    return (getattr(message, "content", None) or "").strip()
+
+
+def _openai_refusal_present(choice: Any) -> bool:
+    """True when the provider set a refusal. The refusal text is not returned."""
+    message = getattr(choice, "message", None)
+    refusal = getattr(message, "refusal", None)
+    if isinstance(refusal, str):
+        return bool(refusal.strip())
+    return refusal is not None
+
+
+def _openai_finish_reason(choice: Any) -> str | None:
+    """A closed finish label, or None when the provider omitted it."""
+    if choice is None:
+        return None
+    reason = getattr(choice, "finish_reason", None)
+    if reason is None:
+        return None
+    raw = getattr(reason, "value", None)
+    if not isinstance(raw, str) or not raw.strip():
+        raw = getattr(reason, "name", None)
+    if not isinstance(raw, str) or not raw.strip():
+        raw = str(reason)
+    label = raw.rsplit(".", 1)[-1].strip().lower()
+    if label in _OPENAI_FINISH_REASONS:
+        return label
+    return "other"
+
+
+def _sent_max_completion_tokens(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _log_openai_chat_attempt(
+    response: Any,
+    *,
+    followup: bool,
+    max_completion_tokens: object,
+) -> None:
+    """One chat attempt. Counts stay in the usage ledger; this line adds none."""
+    choices = getattr(response, "choices", None) or []
+    choice = choices[0] if choices else None
+    _present, response_id, prompt, _cached, completion, reasoning = _chat_usage(response)
+    fields: dict[str, Any] = {
+        "attempt": "followup" if followup else "initial",
+        "empty": not _openai_message_text(choice),
+        "max_completion_tokens": _sent_max_completion_tokens(max_completion_tokens),
+        "finish_reason": _openai_finish_reason(choice),
+        "refusal": _openai_refusal_present(choice),
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "reasoning_tokens": reasoning,
+    }
+    if response_id is not None:
+        fields["response_id"] = response_id
+    log.info("openai_chat_attempt", **fields)
+
+
 def _embedding_usage(response: Any) -> tuple[bool, str | None, int | None]:
     """Embedding usage from this SDK: prompt_tokens and total_tokens.
 
@@ -884,18 +953,21 @@ class OpenAIClient:
                     reasoning_tokens=reasoning,
                 )
                 self._record_openai_usage(response)
+                _log_openai_chat_attempt(
+                    response,
+                    followup=empty_followup,
+                    max_completion_tokens=kwargs.get("max_completion_tokens"),
+                )
                 return response
 
             response = await _create()
-            choice = response.choices[0]
-            text = (getattr(choice.message, "content", None) or "").strip()
+            text = _openai_message_text(response.choices[0])
             if text:
                 return text
             # Count the follow-up only after its slot is reserved inside _create.
             kwargs["max_completion_tokens"] = min(max_tokens * 3, 8192)
             response = await _create(empty_followup=True)
-            choice = response.choices[0]
-            text = (getattr(choice.message, "content", None) or "").strip()
+            text = _openai_message_text(response.choices[0])
             if not text:
                 raise TruncatedCompletionError(f"empty response from {candidate}")
             return text
