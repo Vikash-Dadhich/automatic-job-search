@@ -243,6 +243,59 @@ async def test_telemetry_failure_does_not_stop_the_pipeline(
     assert "scoring" in summary.stages
 
 
+async def test_fresh_sqlite_opens_a_run_without_a_missing_table_warning(
+    tmp_path: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    root = tmp_path if isinstance(tmp_path, Path) else Path(str(tmp_path))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{root / 'fresh.db'}")
+    get_settings.cache_clear()
+    await reset_engine()
+    warnings: list[tuple[str, dict[str, object]]] = []
+
+    def _warn(event: str, **kwargs: object) -> None:
+        warnings.append((event, kwargs))
+
+    monkeypatch.setattr(pipeline_mod.log, "warning", _warn)
+    run_id = await pipeline_mod._safe_open_run()
+    assert run_id is not None
+    assert not any("pipeline_runs" in str(item) for item in warnings)
+    runs = await list_pipeline_runs()
+    assert runs[0].id == run_id
+    assert runs[0].status == "running"
+    await reset_engine()
+
+
+async def test_fresh_sqlite_health_check_does_not_warn_about_a_missing_table(
+    tmp_path: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlib import Path
+
+    root = tmp_path if isinstance(tmp_path, Path) else Path(str(tmp_path))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{root / 'health.db'}")
+    get_settings.cache_clear()
+    await reset_engine()
+    warnings: list[tuple[str, dict[str, object]]] = []
+
+    def _warn(event: str, **kwargs: object) -> None:
+        warnings.append((event, kwargs))
+
+    monkeypatch.setattr("orchestrator.health.log.warning", _warn)
+    try:
+        report = await get_health_report()
+    finally:
+        await reset_engine()
+        get_settings.cache_clear()
+    assert report["database_ok"] is True
+    assert report["status"] == "healthy"
+    assert report["latest_run"] is None
+    assert not any("pipeline_runs" in str(item) for item in warnings)
+    assert not any(event == "monitoring_stale_check_failed" for event, _ in warnings)
+
+
 async def test_fresh_running_run_is_not_stale(db_ready: object) -> None:
     del db_ready
     await open_pipeline_run(now=NOW, run_key="fresh")

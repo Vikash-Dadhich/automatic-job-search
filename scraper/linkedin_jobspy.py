@@ -356,10 +356,11 @@ async def fetch_linkedin_indeed(
 ) -> list[RawPosting]:
     """Fetch JobSpy postings for the discovery plan, once per selected query.
 
-    A failed or timed-out query is recorded as failed and the loop continues.
-    When ``on_batch`` is set, each query's new postings are handed off immediately
-    and this function does not keep them. Callers that need the full list omit
-    ``on_batch``.
+    The live worker runs each site in its own timed process. A timeout or
+    exception is recorded on that site and does not drop rows already returned
+    by another site. A test executor is still invoked once for the whole query.
+    When ``on_batch`` is set, each completed site's new postings are handed off
+    immediately. Callers that need the full list omit ``on_batch``.
     """
     search = targets.search
     if plan is None:
@@ -381,12 +382,31 @@ async def fetch_linkedin_indeed(
     if query_executor is None:
         worker = LineWorker(command or worker_argv())
 
-    async def run_query(term: str) -> list[dict[str, Any]]:
+    async def run_query(term: str, query_sites: list[str]) -> list[dict[str, Any]]:
         if query_executor is not None:
-            return await query_executor(search, term, sites, limit)
+            return await query_executor(search, term, query_sites, limit)
         if worker is None:
             raise RuntimeError("jobspy worker is not running")
-        return await _records_from_worker(worker, search, term, sites, limit)
+        return await _records_from_worker(worker, search, term, query_sites, limit)
+
+    async def _keep(item: PlannedSearch, batch: list[RawPosting]) -> None:
+        fresh: list[RawPosting] = []
+        fresh_keys: set[tuple[str, str]] = set()
+        for posting in batch:
+            key = (posting.source.value, posting.external_id)
+            if key in seen or key in fresh_keys:
+                continue
+            fresh_keys.add(key)
+            fresh.append(posting)
+        # Remember an id only after the caller accepts it. A failed commit
+        # returns False so a later query can try that posting again.
+        accepted = True
+        if on_batch is not None:
+            accepted = (await on_batch(fresh)) is not False
+        else:
+            all_postings.extend(fresh)
+        if accepted:
+            seen.update(fresh_keys)
 
     log.warning(
         "jobspy_recency_windows",
@@ -403,59 +423,63 @@ async def fetch_linkedin_indeed(
                 bucket=item.bucket_id or None,
                 sites=sites,
             )
-            try:
-                records = await run_query(item.query)
-            except asyncio.CancelledError:
-                raise
-            except QueryTimeoutError as exc:
-                log.warning("jobspy_scrape_timeout", term=item.query, error=str(exc))
-                if observations is not None:
-                    observations.extend(
-                        _jobspy_observations(item, sites, [], error=str(exc))
+            # The test executor stands in for one whole query. The live worker
+            # runs one site per process so a hang cannot drop the others.
+            site_passes = [sites] if query_executor is not None else [[site] for site in sites]
+            for query_sites in site_passes:
+                site_name = query_sites[0] if len(query_sites) == 1 else None
+                try:
+                    records = await run_query(item.query, query_sites)
+                except asyncio.CancelledError:
+                    raise
+                except QueryTimeoutError as exc:
+                    log.warning(
+                        "jobspy_scrape_timeout",
+                        term=item.query,
+                        site=site_name,
+                        error=str(exc),
                     )
-                continue
-            except Exception as exc:
-                safe = redact_error(str(exc))
-                log.warning("jobspy_scrape_failed", term=item.query, error=safe)
-                if observations is not None:
-                    observations.extend(
-                        _jobspy_observations(item, sites, [], error=safe)
-                    )
-                continue
-
-            batch, stats = _dataframe_to_postings(
-                _RecordFrame(records),
-                profile=profile,
-                search=item,
-            )
-            if observations is not None:
-                observations.extend(
-                    _jobspy_observations(
-                        item,
-                        sites,
-                        batch,
-                        stats=stats,
-                        results_wanted=search.results_wanted,
-                    )
-                )
-            fresh: list[RawPosting] = []
-            fresh_keys: set[tuple[str, str]] = set()
-            for posting in batch:
-                key = (posting.source.value, posting.external_id)
-                if key in seen or key in fresh_keys:
+                    if observations is not None:
+                        observations.extend(
+                            _jobspy_observations(item, query_sites, [], error=str(exc))
+                        )
                     continue
-                fresh_keys.add(key)
-                fresh.append(posting)
-            # Remember an id only after the caller accepts it. A failed commit
-            # returns False so a later query can try that posting again.
-            accepted = True
-            if on_batch is not None:
-                accepted = (await on_batch(fresh)) is not False
-            else:
-                all_postings.extend(fresh)
-            if accepted:
-                seen.update(fresh_keys)
-            log.info("jobspy_scrape_done", term=item.query, count=len(batch))
+                except Exception as exc:
+                    safe = redact_error(str(exc))
+                    log.warning(
+                        "jobspy_scrape_failed",
+                        term=item.query,
+                        site=site_name,
+                        error=safe,
+                    )
+                    if observations is not None:
+                        observations.extend(
+                            _jobspy_observations(item, query_sites, [], error=safe)
+                        )
+                    continue
+
+                batch, stats = _dataframe_to_postings(
+                    _RecordFrame(records),
+                    profile=profile,
+                    search=item,
+                )
+                if observations is not None:
+                    observations.extend(
+                        _jobspy_observations(
+                            item,
+                            query_sites,
+                            batch,
+                            stats=stats,
+                            results_wanted=search.results_wanted,
+                        )
+                    )
+                await _keep(item, batch)
+                log.info(
+                    "jobspy_scrape_done",
+                    term=item.query,
+                    site=site_name,
+                    count=len(batch),
+                )
     finally:
         if worker is not None:
             await worker.close()

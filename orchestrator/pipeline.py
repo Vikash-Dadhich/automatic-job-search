@@ -449,8 +449,10 @@ async def _run_stage(
 
 async def _safe_open_run() -> int | None:
     try:
+        from core.db import init_db
         from orchestrator.monitoring import interrupt_stale_runs
 
+        await init_db()
         await interrupt_stale_runs()
     except Exception as exc:
         log.warning("monitoring_run_record_failed", error=str(exc)[:200])

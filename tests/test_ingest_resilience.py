@@ -364,24 +364,29 @@ async def test_cancel_keeps_the_committed_query(db_ready: Path) -> None:
 
 _BIG_WORKER = """
 import json, sys
-json.loads(sys.stdin.readline())
-desc = "M" * 3_000_000
-body = {
-    "ok": True,
-    "records": [{
-        "site": "linkedin",
-        "id": "li-big",
-        "title": "Product Manager Intern",
-        "company": "Acme",
-        "job_url": "https://www.linkedin.com/jobs/view/li-big",
-        "description": desc,
-    }],
-}
-sys.stdout.write(json.dumps(body) + "\\n")
-sys.stdout.flush()
-for extra in sys.stdin:
-    if not extra:
-        break
+first = True
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    json.loads(line)
+    if first:
+        desc = "M" * 3_000_000
+        body = {
+            "ok": True,
+            "records": [{
+                "site": "linkedin",
+                "id": "li-big",
+                "title": "Product Manager Intern",
+                "company": "Acme",
+                "job_url": "https://www.linkedin.com/jobs/view/li-big",
+                "description": desc,
+            }],
+        }
+        first = False
+    else:
+        body = {"ok": True, "records": []}
+    sys.stdout.write(json.dumps(body) + "\\n")
+    sys.stdout.flush()
 """
 
 
@@ -565,3 +570,141 @@ async def test_hits_plus_error_marks_the_run_partial(db_ready: Path) -> None:
     async with session_scope() as session:
         stored = await get_job_by_source_id(session, Source.linkedin, "li-partial")
         assert stored is not None
+
+
+_SITE_WORKER = """
+import json, os, sys, time
+pid_path = sys.argv[1]
+for line in sys.stdin:
+    req = json.loads(line)
+    sites = req.get("sites") or []
+    site = sites[0] if sites else ""
+    if site == "google":
+        with open(pid_path, "w", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+        time.sleep(60)
+    if site == "zip_recruiter":
+        sys.stdout.write(json.dumps({"ok": False, "error": "zip exploded"}) + "\\n")
+        sys.stdout.flush()
+        continue
+    record = {
+        "site": "linkedin",
+        "id": "shared-id",
+        "title": "Product Manager Intern",
+        "company": "Acme",
+        "job_url": f"https://www.example.com/jobs/{site}",
+        "description": "Product Manager Intern. Requirements. Current MBA student.",
+    }
+    sys.stdout.write(json.dumps({"ok": True, "records": [record]}) + "\\n")
+    sys.stdout.flush()
+"""
+
+
+def _two_site_plan(*sites: str) -> DiscoveryPlan:
+    return DiscoveryPlan(
+        capacity_requested=1,
+        capacity_usable=1,
+        capacity_assigned=1,
+        families=(),
+        bucket_assigned={},
+        searches=(PlannedSearch("FAMILY", "BUCKET", "Intern"),),
+        jobspy_sites=sites,
+        workday_enabled=False,
+    )
+
+
+async def test_hanging_site_does_not_drop_the_other_sites_rows(tmp_path: Path) -> None:
+    pid_path = tmp_path / "google.pid"
+    saved: list[RawPosting] = []
+    notes: list = []
+
+    async def _keep(batch: list[RawPosting]) -> None:
+        saved.extend(batch)
+
+    await fetch_linkedin_indeed(
+        Targets(search=SearchConfig(terms=["Intern"], sites=["linkedin", "google"])),
+        plan=_two_site_plan("linkedin", "google"),
+        observations=notes,
+        on_batch=_keep,
+        timeout=0.4,
+        command=[sys.executable, "-c", _SITE_WORKER, str(pid_path)],
+    )
+    assert [item.external_id for item in saved] == ["shared-id"]
+    linkedin = [note for note in notes if note.source == "linkedin"]
+    google = [note for note in notes if note.source == "google"]
+    assert linkedin and linkedin[0].status is not SearchStatus.failed
+    assert google and google[0].status is SearchStatus.failed
+    assert "worker process was stopped" in (google[0].error or "")
+    pid = int(pid_path.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+async def test_site_exception_keeps_the_other_sites_rows(tmp_path: Path) -> None:
+    saved: list[RawPosting] = []
+    notes: list = []
+
+    async def _keep(batch: list[RawPosting]) -> None:
+        saved.extend(batch)
+
+    await fetch_linkedin_indeed(
+        Targets(search=SearchConfig(terms=["Intern"], sites=["linkedin", "zip_recruiter"])),
+        plan=_two_site_plan("linkedin", "zip_recruiter"),
+        observations=notes,
+        on_batch=_keep,
+        timeout=2,
+        command=[sys.executable, "-c", _SITE_WORKER, str(tmp_path / "unused.pid")],
+    )
+    assert [item.external_id for item in saved] == ["shared-id"]
+    linkedin = [note for note in notes if note.source == "linkedin"]
+    failed = [note for note in notes if note.source == "zip_recruiter"]
+    assert linkedin[0].status is not SearchStatus.failed
+    assert failed[0].status is SearchStatus.failed
+    assert "zip exploded" in (failed[0].error or "")
+
+
+async def test_same_source_id_from_two_site_passes_is_kept_once(tmp_path: Path) -> None:
+    saved: list[RawPosting] = []
+
+    async def _keep(batch: list[RawPosting]) -> None:
+        saved.extend(batch)
+
+    await fetch_linkedin_indeed(
+        Targets(search=SearchConfig(terms=["Intern"], sites=["linkedin", "indeed"])),
+        plan=_two_site_plan("linkedin", "indeed"),
+        on_batch=_keep,
+        timeout=2,
+        command=[sys.executable, "-c", _SITE_WORKER, str(tmp_path / "unused.pid")],
+    )
+    # The worker labels both passes as LinkedIn with one id. Dedup is
+    # (source, external_id), so Indeed being asked does not create a second row.
+    assert [(item.source, item.external_id) for item in saved] == [
+        (Source.linkedin, "shared-id")
+    ]
+
+
+async def test_posting_cap_still_limits_separately_returned_sites(
+    db_ready: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    from scraper.ingest import run_ingestion
+
+    async def executor(
+        _search: object,
+        _term: str,
+        _sites: list[str],
+        _timeout: float,
+    ) -> list[dict[str, str]]:
+        return [_record("cap-a"), _record("cap-b")]
+
+    monkeypatch.setenv("INGEST_POSTING_CAP", "1")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    summary = await run_ingestion(
+        include_workday=False,
+        search_capacity=1,
+        jobspy_executor=executor,
+    )
+    assert summary.upserted == 1

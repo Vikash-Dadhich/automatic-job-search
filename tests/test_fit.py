@@ -5,11 +5,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from config.profile import Profile
 from core.db import Job, Source, Status, get_job_by_id, session_scope, upsert_job
 from scorer.engine import Scorer
 from scorer.fit import (
     DIMENSIONS,
+    FIT_UNUSABLE_FIELD,
+    FIT_UNUSABLE_GROUNDING,
+    FIT_UNUSABLE_JSON,
+    FIT_UNUSABLE_SCHEMA,
     FIT_VERSION,
     build_fit_system_blocks,
     build_fit_user,
@@ -383,6 +389,84 @@ async def test_insufficient_fit_is_not_stored_as_zero(profile: Profile, db_ready
         assert row.score is None
         assert row.status == Status.discovered
         assert row.fit_confidence == "low"
+
+
+async def test_unusable_fit_response_is_skipped_with_a_reason_code(
+    db_ready: Path,
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del db_ready
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def _record(event: str, **kwargs: object) -> None:
+        events.append((event, kwargs))
+
+    monkeypatch.setattr("scorer.fit.log.info", _record)
+    async with session_scope() as session:
+        saved = await upsert_job(session, _job())
+        job_id = saved.id
+    client = _Client("not json")
+    summary = await Scorer(client=client, profile=profile).score_pending(  # type: ignore[arg-type]
+        client=client,  # type: ignore[arg-type]
+        profile=profile,
+        generate_outreach=False,
+        concurrency=1,
+    )
+    assert summary.scored == 0
+    assert summary.skipped == 1
+    assert summary.staged == 0
+    assert ("fit_unusable", {"job_id": job_id, "reason": FIT_UNUSABLE_JSON}) in [
+        (event, {"job_id": fields.get("job_id"), "reason": fields.get("reason")})
+        for event, fields in events
+    ]
+    assert all("not json" not in str(fields) for _event, fields in events)
+    async with session_scope() as session:
+        assert job_id is not None
+        row = await get_job_by_id(session, job_id)
+        assert row is not None
+        assert row.score is None
+        assert row.status == Status.discovered
+
+
+async def test_fit_reject_reasons_stay_stable(
+    profile: Profile,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    def _record(event: str, **kwargs: object) -> None:
+        if event == "fit_unusable":
+            events.append(str(kwargs.get("reason")))
+
+    monkeypatch.setattr("scorer.fit.log.info", _record)
+    job = _job()
+    await evaluate_fit(
+        job,
+        profile,
+        _Client('{"fit_score": 10}'),  # type: ignore[arg-type]
+        model="gpt-5-mini",
+        max_tokens=128,
+    )
+    bad_field = json.loads(_payload(40))
+    bad_field["confidence"] = "certain"
+    await evaluate_fit(
+        job,
+        profile,
+        _Client(json.dumps(bad_field)),  # type: ignore[arg-type]
+        model="gpt-5-mini",
+        max_tokens=128,
+    )
+    grounded_away = json.loads(_payload(40, strengths=["xylophone"]))
+    grounded_away["evidence"] = []
+    await evaluate_fit(
+        job,
+        profile,
+        _Client(json.dumps(grounded_away)),  # type: ignore[arg-type]
+        model="gpt-5-mini",
+        max_tokens=128,
+    )
+    assert events == [FIT_UNUSABLE_SCHEMA, FIT_UNUSABLE_FIELD, FIT_UNUSABLE_GROUNDING]
 
 
 def test_fit_blocks_include_the_profile(profile: Profile) -> None:

@@ -31,6 +31,7 @@ async def get_health_report(*, now: datetime | None = None) -> dict[str, object]
     interrupted = 0
     if database_ok:
         try:
+            await init_db()
             interrupted = await interrupt_stale_runs(now=moment)
             if interrupted:
                 log.warning("monitoring_run_interrupted", count=interrupted)

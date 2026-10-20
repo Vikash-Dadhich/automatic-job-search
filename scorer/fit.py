@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, Field, ValidationError
 
 from config.profile import Profile
@@ -16,6 +17,12 @@ from core.token_optimizer import cache_block, minify_job
 from scorer.clients import LLMClient, pop_openai_operation, push_openai_operation
 
 FIT_VERSION = "phase6-v2"
+FIT_UNUSABLE_JSON = "invalid_json"
+FIT_UNUSABLE_SCHEMA = "unsupported_schema"
+FIT_UNUSABLE_FIELD = "invalid_field"
+FIT_UNUSABLE_GROUNDING = "grounding_removed"
+
+log = structlog.get_logger(__name__)
 _MIN_JD_CHARS = 80
 
 DIMENSIONS = (
@@ -228,48 +235,63 @@ def _legacy(data: dict[str, Any], job: Job, profile: Profile) -> FitDecision | N
 
 def parse_fit(text: str, job: Job, profile: Profile) -> FitDecision | None:
     """Parse a fit payload. None means the output is not usable."""
+    decision, _reason = _parse_fit_result(text, job, profile)
+    return decision
+
+
+def _parse_fit_result(
+    text: str,
+    job: Job,
+    profile: Profile,
+) -> tuple[FitDecision | None, str | None]:
+    """Return a decision, or None plus a stable reason code. No model text."""
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE).strip()
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None
+        return None, FIT_UNUSABLE_JSON
     if not isinstance(data, dict):
-        return None
+        return None, FIT_UNUSABLE_JSON
     legacy = _legacy(data, job, profile)
     if legacy is not None:
-        return legacy
+        return legacy, None
+    if "s" in data and "fit_score" not in data:
+        return None, FIT_UNUSABLE_FIELD
     try:
         payload = _FitPayload.model_validate(data)
     except ValidationError:
-        return None
+        return None, FIT_UNUSABLE_SCHEMA
     if payload.confidence not in _CONFIDENCE:
-        return None
+        return None, FIT_UNUSABLE_FIELD
     if set(payload.dimensions) != set(DIMENSIONS):
-        return None
+        return None, FIT_UNUSABLE_SCHEMA
     for item in payload.dimensions.values():
         if item.judgment not in _JUDGMENTS:
-            return None
+            return None, FIT_UNUSABLE_FIELD
     corpus = f"{fit_context_block(profile)}\n{job.description_clean or ''}\n{job.title or ''}"
     strengths = _ground(_lines(payload.strengths), corpus)
     gaps = _ground(_lines(payload.gaps), corpus)
     evidence = _ground(_lines(payload.evidence), corpus)
     if _lines(payload.strengths) and not strengths and not evidence:
-        return None
-    return FitDecision(
-        available=True,
-        score=payload.fit_score,
-        confidence=payload.confidence,  # type: ignore[arg-type]
-        strengths=strengths,
-        gaps=gaps,
-        evidence=evidence or strengths,
-        dimensions={
-            name: {"judgment": item.judgment, "note": item.note}
-            for name, item in payload.dimensions.items()
-        },
-        content_hash=job.content_hash,
-        profile_hash=profile_fit_hash(profile),
+        return None, FIT_UNUSABLE_GROUNDING
+    return (
+        FitDecision(
+            available=True,
+            score=payload.fit_score,
+            confidence=payload.confidence,  # type: ignore[arg-type]
+            strengths=strengths,
+            gaps=gaps,
+            evidence=evidence or strengths,
+            dimensions={
+                name: {"judgment": item.judgment, "note": item.note}
+                for name, item in payload.dimensions.items()
+            },
+            content_hash=job.content_hash,
+            profile_hash=profile_fit_hash(profile),
+        ),
+        None,
     )
 
 
@@ -339,7 +361,8 @@ async def evaluate_fit(
         )
     finally:
         pop_openai_operation(token)
-    parsed = parse_fit(raw, job, profile)
+    parsed, reason = _parse_fit_result(raw, job, profile)
     if parsed is None:
+        log.info("fit_unusable", job_id=job.id, reason=reason or FIT_UNUSABLE_SCHEMA)
         return _unavailable(job, profile, "Fit model returned an unusable result.")
     return parsed

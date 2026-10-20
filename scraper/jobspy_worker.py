@@ -2,7 +2,7 @@
 
 Stdin is JSON lines. Stdout is one JSON object per line. Logging stays on stderr
 so it cannot break the result line. This process is killed by its parent when a
-query exceeds ``jobspy_query_timeout_seconds``.
+query exceeds ``jobspy_query_timeout_seconds``. The parent sends one site per line.
 """
 
 from __future__ import annotations
