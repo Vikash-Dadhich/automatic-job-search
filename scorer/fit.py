@@ -16,7 +16,7 @@ from core.db import Job
 from core.token_optimizer import cache_block, minify_job
 from scorer.clients import LLMClient, pop_openai_operation, push_openai_operation
 
-FIT_VERSION = "phase6-v2"
+FIT_VERSION = "phase6-v3"
 FIT_UNUSABLE_JSON = "invalid_json"
 FIT_UNUSABLE_SCHEMA = "unsupported_schema"
 FIT_UNUSABLE_FIELD = "invalid_field"
