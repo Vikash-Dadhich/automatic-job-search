@@ -440,6 +440,13 @@ def _pipeline_status(summary: PipelineSummary) -> str:
     return "succeeded"
 
 
+def _annotate(title: str, message: str) -> None:
+    """Show stage timings on the GitHub run page. Does nothing outside Actions."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        clean = message.replace("\n", " ").replace("\r", " ")
+        print(f"::notice title={title}::{clean}", flush=True)
+
+
 async def _run_stage(
     summary: PipelineSummary,
     name: str,
@@ -453,6 +460,7 @@ async def _run_stage(
         summary.stages[name] = result
         duration_ms = int((time.perf_counter() - stage_started) * 1000)
         log.info("pipeline_stage_ok", stage=name, duration_ms=duration_ms)
+        _annotate(f"stage {name}", f"ok in {duration_ms // 1000}s")
         log.info(
             "monitoring_stage_completed",
             run_id=_current_run.get(),
@@ -464,6 +472,7 @@ async def _run_stage(
     except Exception as exc:
         summary.stage_errors[name] = str(exc)
         duration_ms = int((time.perf_counter() - stage_started) * 1000)
+        _annotate(f"stage {name}", f"FAILED after {duration_ms // 1000}s: {str(exc)[:150]}")
         log.warning(
             "pipeline_stage_failed",
             stage=name,
