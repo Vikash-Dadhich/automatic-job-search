@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import structlog
-from sqlalchemy import JSON, Column, DateTime, text, update
+from sqlalchemy import JSON, Column, DateTime, func, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, SQLModel, UniqueConstraint, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -179,6 +179,8 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "fit_content_hash": "VARCHAR(64)",
         "fit_profile_hash": "VARCHAR(64)",
         "fit_attempts": "INTEGER",
+        "queued_at": "DATETIME",
+        "snoozed_until": "DATETIME",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -243,6 +245,8 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "fit_content_hash": "VARCHAR(64)",
         "fit_profile_hash": "VARCHAR(64)",
         "fit_attempts": "INTEGER",
+        "queued_at": "TIMESTAMP WITH TIME ZONE",
+        "snoozed_until": "TIMESTAMP WITH TIME ZONE",
     },
 }
 
@@ -431,6 +435,9 @@ class Job(SQLModel, table=True):
     )
     review_message_id: int | None = Field(default=None)
     review_chat_id: str | None = Field(default=None, max_length=64)
+    # Apply queue: when the job took a daily seat, and the "Later" snooze end.
+    queued_at: datetime | None = _tz_datetime(nullable=True)
+    snoozed_until: datetime | None = _tz_datetime(nullable=True)
     decided_at: datetime | None = _tz_datetime(nullable=True)
     # Post-submit label. outcome_message_id: NULL = not sent, 0 = send in
     # progress, positive = Telegram message id. Kept off decided_at so a
@@ -1313,6 +1320,25 @@ async def get_unsent_pending_reviews(
     if limit is not None:
         statement = statement.limit(limit)
     result = await session.exec(statement)
+    return list(result.all())
+
+
+async def count_queued_since(session: AsyncSession, since: datetime) -> int:
+    """Jobs that took a queue seat at or after ``since`` (the rolling daily cap)."""
+    result = await session.exec(
+        select(func.count()).select_from(Job).where(col(Job.queued_at) >= since)
+    )
+    return int(result.one())
+
+
+async def get_expired_queue_jobs(session: AsyncSession, before: datetime) -> list[Job]:
+    """pending_review jobs whose queue seat is older than ``before`` with no decision."""
+    result = await session.exec(
+        select(Job).where(
+            col(Job.status) == Status.pending_review,
+            col(Job.queued_at) < before,
+        )
+    )
     return list(result.all())
 
 

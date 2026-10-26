@@ -13,6 +13,7 @@ from bot.outcomes import (
     outcome_message_text,
     send_outcome_prompt,
 )
+from bot.queue import handle_queue_callback, is_queue_callback
 from bot.submit import Submitter, WorkdaySubmitter
 from bot.suggest import decide_suggestion
 from bot.telegram import (
@@ -301,6 +302,9 @@ async def handle_callback(
 
         if is_outcome_callback(data):
             return await _handle_outcome_callback(cq, client=client)
+
+        if is_queue_callback(data):
+            return await handle_queue_callback(cq, client=client)
 
         try:
             action, job_id = decode_callback(data)
