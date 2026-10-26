@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from sqlmodel import select
 
 from bot.ops import (
@@ -148,3 +149,16 @@ def test_production_workflow_turns_on_boards_and_queue() -> None:
     match = re.search(r'^\s+QUEUE_DAILY_LIMIT: "(\d+)"$', text, re.MULTILINE)
     assert match is not None and 0 < int(match.group(1)) <= 25
     assert "schedule:" not in text
+
+
+def test_stage_annotation_only_inside_actions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from orchestrator.pipeline import _annotate
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    _annotate("stage x", "ok in 3s")
+    assert capsys.readouterr().out == ""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    _annotate("stage x", "line one\nline two")
+    assert capsys.readouterr().out == "::notice title=stage x::line one line two\n"
