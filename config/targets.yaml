@@ -48,3 +48,55 @@ workday_tenants:
   - name: "Adobe"
     url: "https://adobe.wd5.myworkdayjobs.com/external_experienced"
     search_terms: []
+
+# Company job boards on Greenhouse, Lever and Ashby. Read only when
+# ENABLE_ATS_BOARDS=true. Only titles with an internship signal are kept.
+#
+# To add a company, open its careers page and look at the board link:
+#   boards.greenhouse.io/<token>   or   job-boards.greenhouse.io/<token>
+#   jobs.lever.co/<token>
+#   jobs.ashbyhq.com/<token>
+# Put <token> below. startup marks small or fast-growing employers. verified stays
+# false until someone has seen the board return jobs. A wrong token is reported
+# as "not found" in the run summary and skipped; it never breaks a run.
+ats_boards:
+  # Greenhouse
+  - {name: "Stripe", provider: greenhouse, token: stripe}
+  - {name: "Airbnb", provider: greenhouse, token: airbnb}
+  - {name: "Databricks", provider: greenhouse, token: databricks}
+  - {name: "Coinbase", provider: greenhouse, token: coinbase}
+  - {name: "Figma", provider: greenhouse, token: figma}
+  - {name: "Robinhood", provider: greenhouse, token: robinhood}
+  - {name: "Instacart", provider: greenhouse, token: instacart}
+  - {name: "Pinterest", provider: greenhouse, token: pinterest}
+  - {name: "Reddit", provider: greenhouse, token: reddit}
+  - {name: "Lyft", provider: greenhouse, token: lyft}
+  - {name: "Dropbox", provider: greenhouse, token: dropbox}
+  - {name: "Asana", provider: greenhouse, token: asana}
+  - {name: "GitLab", provider: greenhouse, token: gitlab}
+  - {name: "Twilio", provider: greenhouse, token: twilio}
+  - {name: "Cloudflare", provider: greenhouse, token: cloudflare}
+  - {name: "Datadog", provider: greenhouse, token: datadog}
+  - {name: "Discord", provider: greenhouse, token: discord}
+  - {name: "MongoDB", provider: greenhouse, token: mongodb}
+  - {name: "Okta", provider: greenhouse, token: okta}
+  - {name: "Samsara", provider: greenhouse, token: samsara}
+  - {name: "Affirm", provider: greenhouse, token: affirm}
+  - {name: "Anthropic", provider: greenhouse, token: anthropic}
+  - {name: "Remitly", provider: greenhouse, token: remitly}
+  - {name: "Brex", provider: greenhouse, token: brex, startup: true}
+  - {name: "Carta", provider: greenhouse, token: carta, startup: true}
+  - {name: "Faire", provider: greenhouse, token: faire, startup: true}
+  - {name: "Webflow", provider: greenhouse, token: webflow, startup: true}
+  - {name: "Gusto", provider: greenhouse, token: gusto, startup: true}
+  # Lever
+  - {name: "Palantir", provider: lever, token: palantir}
+  - {name: "Spotify", provider: lever, token: spotify}
+  - {name: "Plaid", provider: lever, token: plaid, startup: true}
+  # Ashby
+  - {name: "Ramp", provider: ashby, token: ramp, startup: true}
+  - {name: "Notion", provider: ashby, token: notion, startup: true}
+  - {name: "OpenAI", provider: ashby, token: openai}
+  - {name: "Linear", provider: ashby, token: linear, startup: true}
+  - {name: "Mercury", provider: ashby, token: mercury, startup: true}
+  - {name: "Replit", provider: ashby, token: replit, startup: true}

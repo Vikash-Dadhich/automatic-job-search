@@ -96,6 +96,15 @@ class Settings(BaseSettings):
             "That query still runs on each configured JobSpy site and Workday tenant."
         ),
     )
+    enable_ats_boards: bool = Field(
+        default=False,
+        description="Read company boards on Greenhouse, Lever and Ashby during ingestion",
+    )
+    ats_max_age_hours: int | None = Field(
+        default=None,
+        ge=1,
+        description="Skip board postings older than this. None keeps every open posting.",
+    )
     ingest_posting_cap: int | None = Field(
         default=None,
         ge=0,

@@ -19,6 +19,7 @@ from scorer.company_intelligence import (
     trustworthy_company_source,
 )
 from scorer.eligibility import attach_eligibility
+from scraper.ats_boards import fetch_all_boards
 from scraper.coverage import (
     CoverageReport,
     SearchObservation,
@@ -52,6 +53,7 @@ class IngestSummary:
     hours_old: int | None = None
     partial: bool = False
     queries_failed: int = 0
+    boards_not_found: list[str] = field(default_factory=list)
 
 
 async def _load_role_client() -> LLMClient | None:
@@ -166,6 +168,8 @@ def _mark_source_failed(
     workday_observations: list[SearchObservation],
     tenants: tuple[str, ...],
 ) -> None:
+    if label == "boards":
+        return
     if label == "jobspy":
         fail_unrecorded(
             plan,
@@ -293,6 +297,7 @@ async def run_ingestion(
     profile: Profile | None = None,
     include_jobspy: bool = True,
     include_workday: bool = True,
+    include_boards: bool | None = None,
     search_capacity: int | None = None,
     jobspy_executor: QueryExecutor | None = None,
 ) -> IngestSummary:
@@ -368,8 +373,20 @@ async def run_ingestion(
             summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
             return True
 
+    settings = get_settings()
+    use_boards = settings.enable_ats_boards if include_boards is None else include_boards
+    boards = targets.ats_boards if use_boards else []
+
     tasks: list[asyncio.Task[list[RawPosting]]] = []
     labels: list[str] = []
+
+    async def _run_boards() -> list[RawPosting]:
+        run = await fetch_all_boards(boards, max_age_hours=settings.ats_max_age_hours)
+        summary.boards_not_found = run.not_found
+        if run.failed:
+            summary.errors.append(f"boards: {len(run.failed)} failed: {', '.join(run.failed)}")
+        await _accept("boards", run.postings)
+        return []
 
     async def _run_jobspy() -> list[RawPosting]:
         leftover = await fetch_linkedin_indeed(
@@ -402,6 +419,10 @@ async def run_ingestion(
     if include_workday and plan.workday_enabled and active_tenants and plan.searches:
         tasks.append(asyncio.create_task(_run_workday(), name="workday"))
         labels.append("workday")
+
+    if boards:
+        tasks.append(asyncio.create_task(_run_boards(), name="boards"))
+        labels.append("boards")
 
     if not tasks:
         log.warning(

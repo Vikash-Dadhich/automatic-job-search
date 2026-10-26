@@ -12,12 +12,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, ClassVar
 
+import structlog
 from sqlalchemy import JSON, Column, DateTime, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, SQLModel, UniqueConstraint, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from config.settings import PROJECT_ROOT, get_settings
+
+log = structlog.get_logger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -51,6 +54,9 @@ class Source(StrEnum):
     google = "google"
     zip_recruiter = "zip_recruiter"
     workday = "workday"
+    greenhouse = "greenhouse"
+    lever = "lever"
+    ashby = "ashby"
 
 
 class Status(StrEnum):
@@ -861,6 +867,7 @@ async def init_db() -> None:
         await _ensure_company_columns(conn)
         await _ensure_pipeline_stage_columns(conn)
         names = await _job_column_names(conn)
+    await _ensure_source_enum_values()
     # A legacy stub table may still lack the original identity columns.
     if "status" in names and "source" in names:
         from automation.tracker import backfill_submitted_applications
@@ -948,6 +955,29 @@ async def _table_column_names(conn: Any, table: str) -> set[str]:
         )
     ).fetchall()
     return {str(row[0]) for row in rows}
+
+
+async def _ensure_source_enum_values() -> None:
+    """Postgres stores Source as a native enum. Add members created after the table.
+
+    SQLite stores text and needs nothing. A failure is logged and does not stop
+    startup: only rows from a source missing from the enum would fail to save.
+    """
+    engine = get_engine()
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        async with engine.connect() as raw:
+            conn = await raw.execution_options(isolation_level="AUTOCOMMIT")
+            found = await conn.execute(text("SELECT 1 FROM pg_type WHERE typname = 'source'"))
+            if found.first() is None:
+                return
+            for member in Source:
+                await conn.execute(
+                    text(f"ALTER TYPE source ADD VALUE IF NOT EXISTS '{member.name}'")
+                )
+    except Exception as exc:
+        log.warning("source_enum_update_failed", error=str(exc)[:200])
 
 
 async def _ensure_job_columns(conn: Any) -> None:
@@ -1320,7 +1350,15 @@ async def get_unsent_prep_pack_jobs(
         .where(
             col(Job.status) == Status.staged,
             col(Job.source).in_(  # type: ignore[union-attr]
-                [Source.linkedin, Source.indeed, Source.google, Source.zip_recruiter]
+                [
+                    Source.linkedin,
+                    Source.indeed,
+                    Source.google,
+                    Source.zip_recruiter,
+                    Source.greenhouse,
+                    Source.lever,
+                    Source.ashby,
+                ]
             ),
             col(Job.prep_pack_sent_at).is_(None),  # type: ignore[union-attr]
         )

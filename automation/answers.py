@@ -83,6 +83,9 @@ _SOURCE_LABELS = {
     Source.google: "Google",
     Source.zip_recruiter: "ZipRecruiter",
     Source.workday: "Company career site",
+    Source.greenhouse: "Company career site",
+    Source.lever: "Company career site",
+    Source.ashby: "Company career site",
 }
 
 
