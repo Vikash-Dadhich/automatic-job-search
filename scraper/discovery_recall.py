@@ -22,7 +22,10 @@ from core.job_identity import (
 )
 
 BENCHMARK_VERSION = "discovery-recall-v1"
-_SOURCES = frozenset(item.value for item in Source)
+# The V1 benchmark covers the original search boards. Company ATS boards are not part of it.
+_SOURCES = frozenset(
+    item.value for item in Source if item not in {Source.greenhouse, Source.lever, Source.ashby}
+)
 _DEFAULT_PATH = (
     Path(__file__).resolve().parent.parent
     / "tests"
