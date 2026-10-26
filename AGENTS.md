@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> Parts of this file are stale (Gemini, 3x/day APScheduler, Workday auto-fill as the main path). The current flow is in CLAUDE.md under Known state: discovery, scoring, shortlist, Telegram apply queue with Applied/Skip/Later, run by one external dispatch. The code wins over this file.
+
 Guidance for AI agents and developers working on this repository. Read this before making changes.
 
 ## Project
