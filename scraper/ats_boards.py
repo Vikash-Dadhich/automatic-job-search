@@ -300,3 +300,29 @@ async def fetch_all_boards(
         failed=run.failed,
     )
     return run
+
+
+async def check_boards(boards: list[AtsBoard]) -> list[dict[str, object]]:
+    """Status and job counts per board, for cleaning the company list. No scoring."""
+    results: list[dict[str, object]] = []
+    gate = asyncio.Semaphore(_CONCURRENCY)
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=10.0), headers=_HEADERS, follow_redirects=True
+    ) as http:
+
+        async def _one(board: AtsBoard) -> None:
+            async with gate:
+                kept, seen, status = await fetch_board(http, board, max_age_hours=None)
+            results.append(
+                {
+                    "name": board.name,
+                    "provider": board.provider,
+                    "token": board.token,
+                    "status": status,
+                    "open_roles": seen,
+                    "business_internships": len(kept),
+                }
+            )
+
+        await asyncio.gather(*(_one(board) for board in boards))
+    return sorted(results, key=lambda item: str(item["name"]))
