@@ -1,0 +1,10 @@
+# Which of your resume files to use for each kind of role. Names only; no files live here.
+# Change the labels to match the resume versions you keep in Simplify.
+default: General resume
+versions:
+  PRODUCT_MANAGEMENT: Product resume
+  PRODUCT_MARKETING: Product resume
+  CONSULTING: Consulting resume
+  STRATEGY_TRANSFORMATION: Consulting resume
+  PROGRAM_PROJECT_OPERATIONS: General resume
+  MARKETING: General resume
