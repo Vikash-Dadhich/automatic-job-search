@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 
 import structlog
@@ -297,6 +298,61 @@ def _dedupe(postings: list[RawPosting]) -> tuple[list[RawPosting], int]:
     return out, removed
 
 
+def _note(title: str, message: str) -> None:
+    """Progress line on the GitHub run page. Does nothing outside Actions."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title={title}::{message}", flush=True)
+
+
+async def _wait_for_sources(
+    tasks: list[asyncio.Task[list[RawPosting]]],
+    labels: list[str],
+    *,
+    timeout: float,
+    tick: float = 300.0,
+) -> list[list[RawPosting] | BaseException]:
+    """Wait for every source, but never longer than ``timeout`` seconds.
+
+    A source that is still running at the deadline is cancelled and reported as
+    failed, so one stuck source cannot hold the whole run. While waiting, a line
+    every ``tick`` seconds names the sources that are still running.
+    """
+    started = time.monotonic()
+    names = dict(zip(tasks, labels, strict=True))
+    pending = set(tasks)
+    while pending:
+        left = timeout - (time.monotonic() - started)
+        if left <= 0:
+            break
+        done, pending = await asyncio.wait(
+            pending, timeout=min(tick, left), return_when=asyncio.ALL_COMPLETED
+        )
+        for task in done:
+            _note(
+                f"ingestion {names[task]}",
+                f"finished after {int(time.monotonic() - started)}s",
+            )
+        if pending:
+            waiting = ", ".join(sorted(names[task] for task in pending))
+            _note("ingestion waiting", f"{int(time.monotonic() - started)}s: {waiting}")
+    stuck = set(pending)
+    for task in stuck:
+        task.cancel()
+        _note(f"ingestion {names[task]}", f"cancelled at the {int(timeout)}s limit")
+    if stuck:
+        await asyncio.gather(*stuck, return_exceptions=True)
+    results: list[list[RawPosting] | BaseException] = []
+    for task in tasks:
+        if task in stuck:
+            results.append(TimeoutError(f"timed out after {int(timeout)}s"))
+        else:
+            try:
+                results.append(task.result())
+            except BaseException as exc:
+                results.append(exc)
+    return results
+
+
 async def run_ingestion(
     *,
     targets: Targets | None = None,
@@ -458,7 +514,9 @@ async def run_ingestion(
         _attach_coverage(summary, plan, jobspy_observations, workday_observations, ())
         return summary
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    results = await _wait_for_sources(
+        tasks, labels, timeout=float(settings.ingest_source_timeout_seconds)
+    )
     for label, result in zip(labels, results, strict=True):
         if isinstance(result, BaseException):
             safe = redact_error(str(result))

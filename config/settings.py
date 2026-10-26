@@ -171,6 +171,11 @@ class Settings(BaseSettings):
         ge=1,
         description="Days a job tapped Later stays out of the queue",
     )
+    ingest_source_timeout_seconds: int = Field(
+        default=1200,
+        ge=60,
+        description="Longest one discovery source (JobSpy, Workday, boards) may run",
+    )
     fit_max_attempts: int = Field(
         default=3,
         ge=1,
