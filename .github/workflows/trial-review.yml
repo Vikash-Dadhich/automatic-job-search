@@ -1,0 +1,77 @@
+name: Supervised trial (owner approved)
+
+# Manual only. One run with production-sized caps, a throwaway SQLite database,
+# no Telegram, no applying. Results are printed as annotations on the run.
+# The OpenAI balance is the hard limit. OPENAI_MAX_REQUESTS caps requests.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full commit SHA. The checkout must match it.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-trial
+  cancel-in-progress: false
+
+jobs:
+  run-trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify the commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          printf 'trial_sha=%s\n' "$sha"
+          [ "$sha" = "$EXPECTED_SHA" ] || { echo "Checkout does not match."; exit 1; }
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Run trial
+        run: uv run python main.py run-once > pipeline_output.txt 2>trial_stderr.txt
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///storage/trial.db
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INTERNSHIP_ONLY: "true"
+          ENABLE_APPLY: "false"
+          ENABLE_BENCHMARK: "false"
+          ENABLE_LINKEDIN_SCRAPE: "false"
+          ENABLE_REVIEWS: "false"
+          ENABLE_PREP_PACK: "false"
+          ENABLE_SUGGESTIONS: "false"
+          ENABLE_ATS_BOARDS: "true"
+          TIER_ONE_DRAFTS_ENABLED: "false"
+          SEARCH_CAPACITY: "8"
+          INGEST_POSTING_CAP: "400"
+          EMBED_MAX_INPUTS: "400"
+          ROLE_CLASSIFY_MAX_CALLS: "40"
+          SCORE_BUDGET: "60"
+          OPENAI_MAX_REQUESTS: "150"
+          TIMEZONE: America/Los_Angeles
+          LLM_PROVIDER: openai
+          OPENAI_SCORER_MODEL: gpt-5-mini
+          OPENAI_WRITER_MODEL: gpt-5-mini
+
+      - name: Report
+        if: always()
+        run: |
+          python3 scripts/trial_report.py storage/trial.db pipeline_output.txt || true
+          grep -E "ats_board|ingestion_|score_pending|fit_unusable|board" trial_stderr.txt | tail -25 | cut -c1-300 | while read -r l; do echo "::notice::$l"; done
