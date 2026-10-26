@@ -29,7 +29,7 @@ An agent that finds Summer 2027 MBA internships in the US (product management an
 - Do not commit secrets, `.env`, personal data, resumes, generated output, or files under `graphify-out/`.
 - `test_production_workflow_file_is_unchanged` compares `pipeline.yml` with `HEAD`, so tests fail until a workflow edit is committed.
 
-## Known state (as of 25 Oct 2026, Phase 2)
+## Known state (as of 26 Oct 2026, Phase 7)
 
 - `FIT_VERSION` is `phase2-v1`. Stored jobs keep their old version string and are not re-scored; only newly scored jobs get the new one.
 - Production sets spend caps in `pipeline.yml` (search capacity 40, score budget 60, 150 OpenAI requests, 60 role calls, posting and embedding caps). Raise them only with cost evidence.
@@ -39,6 +39,10 @@ An agent that finds Summer 2027 MBA internships in the US (product management an
 - Fit answers use a strict JSON schema (enums for judgment and confidence, all 8 dimensions required) and the same validation as before. The rubric defines the five labels for `REQUIREMENTS_RISK`. Grounding accepts inflections (shared first six letters); invented facts are still dropped.
 - An unusable fit answer is retried at most `FIT_MAX_ATTEMPTS` (3) times, tracked in `jobs.fit_attempts`, then the job becomes `error` with `last_error` set. `score_max_tokens` is unchanged at 1024; raise it only with evidence of truncation.
 - Company job boards (Greenhouse, Lever, Ashby) are read by `scraper/ats_boards.py` from the `ats_boards` list in `config/targets.yaml`. They are off unless `ENABLE_ATS_BOARDS=true`; `pipeline.yml` does not set it yet. The board checker workflow (Check company boards) reports which names work; dead names were removed on 26 Oct 2026 and the rest are `verified: true`. A wrong token is reported as not found and skipped. Only internship titles that look like business roles (product, strategy, consulting, operations, marketing, analyst) are kept. `ATS_MAX_AGE_HOURS` limits age (unset keeps every open posting). `Source` gained `greenhouse`, `lever`, `ashby`; `init_db` adds them to the Postgres enum.
+- Apply queue (Phase 4): with `ENABLE_APPLY=false` and Telegram set, each run first reads button taps (`telegram_sync`, one-shot `getUpdates`), expires old cards, then the shortlist fills open seats, capped at `QUEUE_DAILY_LIMIT` (15) new jobs per rolling 24h. Cards carry Applied / Skip / Later (`q1|` callbacks, `bot/queue.py`). Applied only records that the owner applied by hand. Later hides a job for `QUEUE_SNOOZE_DAYS` (3); unanswered cards expire after `QUEUE_EXPIRY_DAYS` (7). New `jobs.queued_at` and `jobs.snoozed_until` columns.
+- Application kit (Phase 5): each queue card shows the resume version (`config/resume_versions.yaml`, by role family), a deadline when the posting states one, and two drafted answers from the grounded resolver (queued jobs only).
+- Operations (Phase 6): a run after more than 26 hours without a good run sends a Telegram notice; the first run on Monday sends a weekly summary. `pipeline.yml` sets `ENABLE_ATS_BOARDS`, `SIMPLIFY_DISCOVERY` and `QUEUE_DAILY_LIMIT`. The only scheduler is the external cron-job.org dispatch.
+- Repo hygiene (Phase 7): resume PDFs, `graphify-out/`, baselines and benchmarks are untracked and ignored. `config/profile.yaml` still holds personal contact details and is required by the code, so the repo should be private. Git history before 26 Oct 2026 still contains the removed files.
 - The scheduled run is not active right now. Do not turn it back on without a readiness review.
 
 Detailed onboarding notes live in the owner's private project, not in this public repo. Ask the owner if you need them.

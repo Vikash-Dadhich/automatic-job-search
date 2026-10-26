@@ -51,3 +51,11 @@ graphify-out/cache/
 .pyright/
 .pytest_cache/
 .DS_Store
+
+# Personal and generated files must never be committed
+graphify-out/
+storage/baselines/
+storage/benchmarks/
+review-fixes.patch
+*.pdf
+!tests/**/*.pdf
