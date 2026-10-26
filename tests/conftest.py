@@ -22,6 +22,17 @@ def _disable_apply_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_profile_embedding_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fake test vectors must never be written next to real cached profile vectors."""
+    monkeypatch.setattr(
+        "scorer.embeddings._cache_path",
+        lambda digest: tmp_path / "embeddings" / f"profile-{digest}.json",
+    )
+
+
+@pytest.fixture(autouse=True)
 def _disable_vector_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep scoring offline unless a test opts into the embedding gate."""
     monkeypatch.setenv("VECTOR_GATE_ENABLED", "false")
