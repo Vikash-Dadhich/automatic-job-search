@@ -13,6 +13,7 @@ from config.targets import AtsBoard, Targets
 from scraper.ats_boards import BoardRun, check_boards
 from scraper.ingest import run_ingestion
 from scraper.simplify_list import (
+    SimplifyRow,
     board_from_url,
     discover_boards,
     fetch_simplify_rows,
@@ -153,7 +154,7 @@ async def test_ingestion_adds_discovered_boards(
         seen["age"] = kwargs.get("max_age_hours")
         return BoardRun()
 
-    async def fake_rows() -> list[object]:
+    async def fake_rows() -> list[SimplifyRow]:
         return parse_simplify_readme(_README)
 
     monkeypatch.setattr("scraper.ingest.fetch_all_boards", fake_fetch)
