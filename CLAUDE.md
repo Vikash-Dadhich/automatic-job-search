@@ -13,7 +13,7 @@ An agent that finds Summer 2027 MBA internships in the US (product management an
 
 1. Run `git pull` before starting any work, then confirm `git status` is clean or understood.
 2. Never commit or push straight to `main`. Work on a branch (`claude/<short-topic>`) and open a pull request.
-3. The owner merges on GitHub, then pulls locally. GitHub `main` is the single source of truth.
+3. Claude may merge its own pull request once CI is green (standing permission from the owner, 25 Oct 2026). The owner then runs `git pull` locally. GitHub `main` is the single source of truth. Never merge with red CI, and never merge a PR that touches `pipeline.yml` schedules or spend caps without telling the owner first.
 4. One topic per branch and PR. Do not mix in unrelated files.
 5. Tell the owner which branch and commit you are on at the start and end of a session.
 6. Cloud sessions usually cannot install packages, so they cannot run tests. Let CI (`ci.yml`: pytest, Ruff, Pyright) run on the PR and report its result. Local sessions should run `uv run pytest -q`, `uv run ruff check .` and `uv run pyright` before pushing.
