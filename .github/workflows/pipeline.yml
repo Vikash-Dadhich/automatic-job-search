@@ -67,3 +67,8 @@ jobs:
           ROLE_CLASSIFY_MAX_CALLS: "60"
           SCORE_BUDGET: "60"
           OPENAI_MAX_REQUESTS: "150"
+          # Company boards (verified list in targets.yaml) and Simplify-based board discovery.
+          ENABLE_ATS_BOARDS: "true"
+          SIMPLIFY_DISCOVERY: "true"
+          # Apply queue: at most this many new cards in any 24 hours.
+          QUEUE_DAILY_LIMIT: "15"
