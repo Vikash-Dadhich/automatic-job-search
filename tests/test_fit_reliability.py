@@ -63,7 +63,7 @@ def test_grounding_accepts_inflections_and_still_drops_invented_facts() -> None:
     kept = _ground(
         [
             "Leadership of the platform migration maps to the roadmap work.",
-            "Management of engineering partners is relevant.",
+            "Management of engineering partners.",
             "Strong xylophone certification.",
             "Hands-on kubernetes administration.",
         ],
@@ -71,7 +71,7 @@ def test_grounding_accepts_inflections_and_still_drops_invented_facts() -> None:
     )
     assert kept == [
         "Leadership of the platform migration maps to the roadmap work.",
-        "Management of engineering partners is relevant.",
+        "Management of engineering partners.",
     ]
 
 
