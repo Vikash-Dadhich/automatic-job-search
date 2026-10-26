@@ -47,4 +47,11 @@ jobs:
         run: uv run ruff check .
 
       - name: Pyright
-        run: uv run pyright
+        run: |
+          set +e
+          uv run pyright > pyright.out 2>&1
+          code=$?
+          tail -n 3 pyright.out
+          grep -E " - error" pyright.out | head -25 | cut -c1-400 \
+            | while read -r l; do echo "::error::$l"; done
+          exit $code
