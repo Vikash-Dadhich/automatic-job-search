@@ -136,9 +136,40 @@ class WorkdayTenant(BaseModel):
         )
 
 
+ATS_PROVIDERS = ("greenhouse", "lever", "ashby")
+
+
+class AtsBoard(BaseModel):
+    """One company's public job board on Greenhouse, Lever, or Ashby."""
+
+    name: str
+    provider: str
+    token: str
+    startup: bool = False
+    # False until someone has opened the board and seen it return jobs.
+    verified: bool = False
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        value = value.lower().strip()
+        if value not in ATS_PROVIDERS:
+            raise ValueError(f"provider must be one of {ATS_PROVIDERS}, got {value!r}")
+        return value
+
+    @field_validator("token")
+    @classmethod
+    def validate_token(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+            raise ValueError(f"board token has unexpected characters: {value!r}")
+        return value
+
+
 class Targets(BaseModel):
     search: SearchConfig
     workday_tenants: list[WorkdayTenant] = Field(default_factory=list)
+    ats_boards: list[AtsBoard] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _note_empty_tenants(self) -> Targets:

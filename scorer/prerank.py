@@ -46,6 +46,9 @@ _ROLE_KEYWORDS = (
 # when all else is equal (Google is an aggregator; dedupe favors the original).
 _SOURCE_WEIGHT = {
     Source.workday: 6.0,
+    Source.greenhouse: 6.0,
+    Source.lever: 6.0,
+    Source.ashby: 6.0,
     Source.linkedin: 4.0,
     Source.indeed: 3.0,
     Source.zip_recruiter: 2.0,
