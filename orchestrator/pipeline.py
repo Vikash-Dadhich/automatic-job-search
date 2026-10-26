@@ -12,6 +12,7 @@ import structlog
 
 from automation.runner import apply_pending
 from bot.alerts import send_pending_alerts
+from bot.ops import send_heartbeat_notice, send_weekly_summary
 from bot.outcomes import send_pending_outcome_prompts
 from bot.prep import send_prep_pack
 from bot.queue import expire_queue, send_queue_cards, sync_telegram
@@ -96,6 +97,8 @@ _send_pending_suggestions = send_pending_suggestions
 _sync_telegram = sync_telegram
 _expire_queue = expire_queue
 _send_queue_cards = send_queue_cards
+_send_heartbeat = send_heartbeat_notice
+_send_weekly_summary = send_weekly_summary
 
 
 def _queue_enabled(settings: Any, *, do_apply: bool, do_reviews: bool) -> bool:
@@ -304,6 +307,7 @@ async def _run_opened_pipeline(
     use_queue = _queue_enabled(settings, do_apply=do_apply, do_reviews=do_reviews)
     if use_queue:
         # Taps since the last run free seats before the shortlist fills them again.
+        await _run_stage(summary, "heartbeat", _send_heartbeat)
         await _run_stage(summary, "telegram_sync", _sync_telegram)
         await _run_stage(summary, "queue_expiry", _expire_queue)
 
@@ -366,6 +370,7 @@ async def _run_opened_pipeline(
                 await _run_stage(summary, "reviews", _send_pending_reviews)
             elif use_queue:
                 await _run_stage(summary, "queue", _send_queue_cards)
+                await _run_stage(summary, "weekly_summary", _send_weekly_summary)
                 await _note_skipped(summary, "reviews")
             else:
                 await _note_skipped(summary, "reviews")
