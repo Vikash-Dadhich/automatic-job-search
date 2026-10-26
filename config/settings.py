@@ -135,6 +135,11 @@ class Settings(BaseSettings):
         ge=128,
         description="max_output_tokens for scoring (includes Gemini thinking tokens)",
     )
+    fit_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Unusable fit answers allowed per job before it is marked error",
+    )
     writer_max_tokens: int = Field(
         default=2048,
         ge=128,

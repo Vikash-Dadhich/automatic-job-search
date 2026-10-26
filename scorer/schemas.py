@@ -81,6 +81,8 @@ class Evaluation(BaseModel):
     cover_letter: str | None = None
     # False when the JD is too thin or the fit payload is unusable. Score is not a fit.
     fit_available: bool = True
+    # The model answered but the answer failed validation (counts toward the retry cap).
+    fit_unusable: bool = False
     fit_confidence: str | None = None
     fit_strengths: list[str] = Field(default_factory=list)
     fit_gaps: list[str] = Field(default_factory=list)

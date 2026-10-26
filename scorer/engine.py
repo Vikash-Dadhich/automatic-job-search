@@ -831,6 +831,7 @@ class Scorer:
                 outreach=None,
                 cover_letter=None,
                 fit_available=False,
+                fit_unusable=decision.unusable,
                 fit_confidence=decision.confidence,
                 fit_strengths=decision.strengths,
                 fit_gaps=decision.gaps,
@@ -934,8 +935,24 @@ class Scorer:
                         structured=structured,
                         company_context=company,
                     )
-                    session.add(target)
                     outcome = _JobOutcome(kind="unavailable", job_id=job.id)
+                    if evaluation.fit_unusable:
+                        # Each unusable answer is a paid call. Stop after the cap and
+                        # surface the job instead of re-billing it every run.
+                        attempts = (target.fit_attempts or 0) + 1
+                        target.fit_attempts = attempts
+                        if attempts >= get_settings().fit_max_attempts:
+                            target.status = Status.error
+                            target.last_error = (
+                                f"fit answer unusable after {attempts} attempts"
+                            )
+                            target.alerted_at = None
+                            outcome = _JobOutcome(
+                                kind="error",
+                                job_id=job.id,
+                                detail=f"job {job.id}: {target.last_error}",
+                            )
+                    session.add(target)
                 else:
                     target.score = evaluation.score
                     target.tier = evaluation.tier
@@ -946,6 +963,7 @@ class Scorer:
                     target.cover_letter = evaluation.cover_letter
                     target.scored_at = now
                     target.status = new_status
+                    target.fit_attempts = None
                     target.fit_confidence = evaluation.fit_confidence
                     target.fit_strengths = evaluation.fit_strengths or None
                     target.fit_gaps = evaluation.fit_gaps or None

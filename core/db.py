@@ -172,6 +172,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "fit_version": "VARCHAR(32)",
         "fit_content_hash": "VARCHAR(64)",
         "fit_profile_hash": "VARCHAR(64)",
+        "fit_attempts": "INTEGER",
     },
     "postgresql": {
         "cover_letter": "TEXT",
@@ -235,6 +236,7 @@ _JOB_COLUMN_DDL: dict[str, dict[str, str]] = {
         "fit_version": "VARCHAR(32)",
         "fit_content_hash": "VARCHAR(64)",
         "fit_profile_hash": "VARCHAR(64)",
+        "fit_attempts": "INTEGER",
     },
 }
 
@@ -410,6 +412,8 @@ class Job(SQLModel, table=True):
     fit_version: str | None = Field(default=None, max_length=32)
     fit_content_hash: str | None = Field(default=None, max_length=64)
     fit_profile_hash: str | None = Field(default=None, max_length=64)
+    # Unusable model answers since the last good fit. Capped by FIT_MAX_ATTEMPTS.
+    fit_attempts: int | None = Field(default=None)
 
     # Workflow
     status: Status = Field(default=Status.discovered, index=True)
@@ -1184,6 +1188,7 @@ async def upsert_job(session: AsyncSession, job: Job) -> Job:
         existing.fit_version = None
         existing.fit_content_hash = None
         existing.fit_profile_hash = None
+        existing.fit_attempts = None
         existing.eligibility_state = None
         existing.eligibility_reasons = None
         existing.eligibility_evidence = None

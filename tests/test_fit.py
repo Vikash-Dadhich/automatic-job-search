@@ -178,7 +178,7 @@ def test_phase6_v1_fit_is_stale(profile: Profile) -> None:
     job.fit_content_hash = job.content_hash
     job.fit_profile_hash = profile_fit_hash(profile)
     job.fit_version = "phase6-v1"
-    assert FIT_VERSION == "phase6-v2"
+    assert FIT_VERSION == "phase2-v1"
     assert fit_is_current(job, profile) is False
     job.fit_version = FIT_VERSION
     assert fit_is_current(job, profile) is True

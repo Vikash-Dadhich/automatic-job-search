@@ -887,7 +887,7 @@ class OpenAIClient:
         json_schema: dict[str, Any] | None = None,
         thinking_level: str | None = None,
     ) -> str:
-        del json_schema, thinking_level
+        del thinking_level
         settings = get_settings()
         system = system_blocks_to_text(system_blocks)
 
@@ -908,7 +908,9 @@ class OpenAIClient:
             # gpt-5 and o-series reject a custom temperature.
             if not candidate.startswith(("gpt-5", "o1", "o3", "o4")):
                 kwargs["temperature"] = temperature
-            if json_mode:
+            if json_schema:
+                kwargs["response_format"] = {"type": "json_schema", "json_schema": json_schema}
+            elif json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
             if candidate.startswith(("gpt-5", "o1", "o3", "o4")):
                 kwargs["reasoning_effort"] = "minimal"
@@ -1068,7 +1070,7 @@ class GeminiClient:
         if json_mode:
             kwargs["response_mime_type"] = "application/json"
             if json_schema:
-                kwargs["response_schema"] = json_schema
+                kwargs["response_schema"] = json_schema.get("schema", json_schema)
         level = (thinking_level or "").strip().lower()
         if level and (model, level) not in self._unsupported_levels:
             try:
