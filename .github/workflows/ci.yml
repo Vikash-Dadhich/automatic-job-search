@@ -31,7 +31,13 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Pytest
-        run: uv run pytest -q
+        run: |
+          set +e
+          uv run pytest -q -rfE --tb=short > pytest.out 2>&1
+          code=$?
+          grep -E "^(FAILED|ERROR) " pytest.out | head -20 | cut -c1-400 | while read -r l; do echo "::error::$l"; done
+          grep -E "^E  " pytest.out | head -25 | cut -c1-300 | while read -r l; do echo "::warning::$l"; done
+          exit $code
 
       - name: Ruff
         run: uv run ruff check .
