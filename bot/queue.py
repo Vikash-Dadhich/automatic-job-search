@@ -14,6 +14,8 @@ from typing import Any
 
 import structlog
 
+from automation.answers import AnswerResolver
+from bot.review import format_answers_message
 from bot.submit import SubmitResult
 from bot.telegram import TelegramClient
 from config.settings import get_settings
@@ -26,6 +28,7 @@ from core.db import (
     init_db,
     session_scope,
 )
+from resume.kit import build_answers, has_kit, kit_lines
 
 log = structlog.get_logger(__name__)
 
@@ -95,6 +98,7 @@ def build_queue_text(job: Job) -> str:
     ]
     if job.justification:
         lines.append("Why: " + "; ".join(str(item) for item in job.justification[:2]))
+    lines.extend(kit_lines(job))
     lines.append(f"Apply: {job.url}")
     lines.append("Tap Applied once you have submitted it yourself.")
     text = "\n".join(lines)
@@ -112,8 +116,12 @@ async def send_queue_cards(
     client: TelegramClient | None = None,
     *,
     limit: int | None = None,
+    resolver: AnswerResolver | None = None,
 ) -> QueueSummary:
-    """Send a card for every pending_review job that has none yet."""
+    """Send a card for every pending_review job that has none yet.
+
+    Each new card also gets two drafted answers. A model failure only skips the answers.
+    """
     await init_db()
     client = client or TelegramClient()
     summary = QueueSummary()
@@ -123,6 +131,14 @@ async def send_queue_cards(
         if job.id is None:
             continue
         try:
+            if not has_kit(job):
+                try:
+                    payload = await build_answers(job, resolver)
+                except Exception as exc:
+                    log.warning("kit_answers_failed", job_id=job.id, error=str(exc)[:200])
+                    payload = None
+                if payload:
+                    job.application_answers = payload
             result = await client.send_message(
                 build_queue_text(job), reply_markup=build_queue_keyboard(job.id)
             )
@@ -137,8 +153,16 @@ async def send_queue_cards(
                     continue
                 target.review_message_id = int(message_id)
                 target.review_chat_id = chat_id or target.review_chat_id
+                if job.application_answers and not has_kit(target):
+                    target.application_answers = job.application_answers
                 target.updated_at = datetime.now(UTC)
                 session.add(target)
+            answers_text = format_answers_message(job)
+            if answers_text:
+                try:
+                    await client.send_message(answers_text, chat_id=chat_id or None)
+                except Exception as exc:
+                    log.warning("queue_answers_send_failed", job_id=job.id, error=str(exc)[:100])
             summary.sent += 1
         except Exception as exc:
             log.warning("send_queue_card_failed", job_id=job.id, error=str(exc)[:200])
