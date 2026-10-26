@@ -56,97 +56,73 @@ workday_tenants:
 #   boards.greenhouse.io/<token>   or   job-boards.greenhouse.io/<token>
 #   jobs.lever.co/<token>
 #   jobs.ashbyhq.com/<token>
-# Put <token> below. startup marks small or fast-growing employers. verified stays
-# false until someone has seen the board return jobs. A wrong token is reported
+# Put <token> below. startup marks small or fast-growing employers. verified means the
+# board checker saw it return jobs on 26 Oct 2026. A wrong token is reported
 # as "not found" in the run summary and skipped; it never breaks a run.
 ats_boards:
   # Greenhouse
-  - {name: "Stripe", provider: greenhouse, token: stripe}
-  - {name: "Airbnb", provider: greenhouse, token: airbnb}
-  - {name: "Databricks", provider: greenhouse, token: databricks}
-  - {name: "Coinbase", provider: greenhouse, token: coinbase}
-  - {name: "Figma", provider: greenhouse, token: figma}
-  - {name: "Robinhood", provider: greenhouse, token: robinhood}
-  - {name: "Instacart", provider: greenhouse, token: instacart}
-  - {name: "Pinterest", provider: greenhouse, token: pinterest}
-  - {name: "Reddit", provider: greenhouse, token: reddit}
-  - {name: "Lyft", provider: greenhouse, token: lyft}
-  - {name: "Dropbox", provider: greenhouse, token: dropbox}
-  - {name: "Asana", provider: greenhouse, token: asana}
-  - {name: "GitLab", provider: greenhouse, token: gitlab}
-  - {name: "Twilio", provider: greenhouse, token: twilio}
-  - {name: "Cloudflare", provider: greenhouse, token: cloudflare}
-  - {name: "Datadog", provider: greenhouse, token: datadog}
-  - {name: "Discord", provider: greenhouse, token: discord}
-  - {name: "MongoDB", provider: greenhouse, token: mongodb}
-  - {name: "Okta", provider: greenhouse, token: okta}
-  - {name: "Samsara", provider: greenhouse, token: samsara}
-  - {name: "Affirm", provider: greenhouse, token: affirm}
-  - {name: "Anthropic", provider: greenhouse, token: anthropic}
-  - {name: "Remitly", provider: greenhouse, token: remitly}
-  - {name: "Brex", provider: greenhouse, token: brex, startup: true}
-  - {name: "Carta", provider: greenhouse, token: carta, startup: true}
-  - {name: "Faire", provider: greenhouse, token: faire, startup: true}
-  - {name: "Webflow", provider: greenhouse, token: webflow, startup: true}
-  - {name: "Gusto", provider: greenhouse, token: gusto, startup: true}
+  - {name: "Stripe", provider: greenhouse, token: stripe, verified: true}
+  - {name: "Airbnb", provider: greenhouse, token: airbnb, verified: true}
+  - {name: "Databricks", provider: greenhouse, token: databricks, verified: true}
+  - {name: "Coinbase", provider: greenhouse, token: coinbase, verified: true}
+  - {name: "Figma", provider: greenhouse, token: figma, verified: true}
+  - {name: "Robinhood", provider: greenhouse, token: robinhood, verified: true}
+  - {name: "Instacart", provider: greenhouse, token: instacart, verified: true}
+  - {name: "Pinterest", provider: greenhouse, token: pinterest, verified: true}
+  - {name: "Reddit", provider: greenhouse, token: reddit, verified: true}
+  - {name: "Lyft", provider: greenhouse, token: lyft, verified: true}
+  - {name: "Dropbox", provider: greenhouse, token: dropbox, verified: true}
+  - {name: "Asana", provider: greenhouse, token: asana, verified: true}
+  - {name: "GitLab", provider: greenhouse, token: gitlab, verified: true}
+  - {name: "Twilio", provider: greenhouse, token: twilio, verified: true}
+  - {name: "Cloudflare", provider: greenhouse, token: cloudflare, verified: true}
+  - {name: "Datadog", provider: greenhouse, token: datadog, verified: true}
+  - {name: "Discord", provider: greenhouse, token: discord, verified: true}
+  - {name: "MongoDB", provider: greenhouse, token: mongodb, verified: true}
+  - {name: "Okta", provider: greenhouse, token: okta, verified: true}
+  - {name: "Samsara", provider: greenhouse, token: samsara, verified: true}
+  - {name: "Affirm", provider: greenhouse, token: affirm, verified: true}
+  - {name: "Anthropic", provider: greenhouse, token: anthropic, verified: true}
+  - {name: "Brex", provider: greenhouse, token: brex, startup: true, verified: true}
+  - {name: "Carta", provider: greenhouse, token: carta, startup: true, verified: true}
+  - {name: "Faire", provider: greenhouse, token: faire, startup: true, verified: true}
+  - {name: "Webflow", provider: greenhouse, token: webflow, startup: true, verified: true}
+  - {name: "Gusto", provider: greenhouse, token: gusto, startup: true, verified: true}
   # Lever
-  - {name: "Palantir", provider: lever, token: palantir}
-  - {name: "Spotify", provider: lever, token: spotify}
-  - {name: "Plaid", provider: lever, token: plaid, startup: true}
+  - {name: "Palantir", provider: lever, token: palantir, verified: true}
+  - {name: "Spotify", provider: lever, token: spotify, verified: true}
   # Ashby
-  - {name: "Ramp", provider: ashby, token: ramp, startup: true}
-  - {name: "Notion", provider: ashby, token: notion, startup: true}
-  - {name: "OpenAI", provider: ashby, token: openai}
-  - {name: "Linear", provider: ashby, token: linear, startup: true}
-  - {name: "Mercury", provider: ashby, token: mercury, startup: true}
-  - {name: "Replit", provider: ashby, token: replit, startup: true}
-  # More candidates (unverified). The board checker reports which names work.
+  - {name: "Ramp", provider: ashby, token: ramp, startup: true, verified: true}
+  - {name: "Notion", provider: ashby, token: notion, startup: true, verified: true}
+  - {name: "OpenAI", provider: ashby, token: openai, verified: true}
+  - {name: "Linear", provider: ashby, token: linear, startup: true, verified: true}
+  - {name: "Mercury", provider: ashby, token: mercury, startup: true, verified: true}
+  - {name: "Replit", provider: ashby, token: replit, startup: true, verified: true}
+  # More companies. The board checker (Actions > Check company boards) shows which names work.
   # Consumer and marketplaces
-  - {name: "DoorDash", provider: greenhouse, token: doordash}
-  - {name: "Etsy", provider: greenhouse, token: etsy}
-  - {name: "Opendoor", provider: greenhouse, token: opendoor}
-  - {name: "Peloton", provider: greenhouse, token: peloton}
-  - {name: "Warby Parker", provider: greenhouse, token: warbyparker}
-  - {name: "Rover", provider: greenhouse, token: rover}
-  - {name: "Redfin", provider: greenhouse, token: redfin}
-  - {name: "Calendly", provider: greenhouse, token: calendly, startup: true}
+  - {name: "Peloton", provider: greenhouse, token: peloton, verified: true}
+  - {name: "Calendly", provider: greenhouse, token: calendly, startup: true, verified: true}
   # Software and infrastructure (Seattle and remote friendly)
-  - {name: "HubSpot", provider: greenhouse, token: hubspot}
-  - {name: "Intercom", provider: greenhouse, token: intercom}
-  - {name: "Amplitude", provider: greenhouse, token: amplitude}
-  - {name: "Mixpanel", provider: greenhouse, token: mixpanel}
-  - {name: "PagerDuty", provider: greenhouse, token: pagerduty}
-  - {name: "Smartsheet", provider: greenhouse, token: smartsheet}
-  - {name: "Highspot", provider: greenhouse, token: highspot}
-  - {name: "Outreach", provider: greenhouse, token: outreach}
-  - {name: "Airtable", provider: greenhouse, token: airtable, startup: true}
-  - {name: "Glean", provider: greenhouse, token: gleanwork, startup: true}
-  - {name: "Scale AI", provider: greenhouse, token: scaleai, startup: true}
-  - {name: "Zapier", provider: ashby, token: zapier, startup: true}
-  - {name: "Vercel", provider: greenhouse, token: vercel, startup: true}
-  - {name: "Supabase", provider: ashby, token: supabase, startup: true}
-  - {name: "Retool", provider: ashby, token: retool, startup: true}
-  - {name: "Rippling", provider: ashby, token: rippling, startup: true}
-  - {name: "Deel", provider: ashby, token: deel, startup: true}
-  - {name: "Perplexity", provider: ashby, token: perplexity, startup: true}
-  - {name: "Cohere", provider: ashby, token: cohere, startup: true}
-  - {name: "Clay", provider: ashby, token: clay, startup: true}
-  - {name: "Hex", provider: ashby, token: hex, startup: true}
-  - {name: "Lattice", provider: ashby, token: lattice, startup: true}
+  - {name: "Intercom", provider: greenhouse, token: intercom, verified: true}
+  - {name: "Mixpanel", provider: greenhouse, token: mixpanel, verified: true}
+  - {name: "PagerDuty", provider: greenhouse, token: pagerduty, verified: true}
+  - {name: "Smartsheet", provider: greenhouse, token: smartsheet, verified: true}
+  - {name: "Airtable", provider: greenhouse, token: airtable, startup: true, verified: true}
+  - {name: "Glean", provider: greenhouse, token: gleanwork, startup: true, verified: true}
+  - {name: "Scale AI", provider: greenhouse, token: scaleai, startup: true, verified: true}
+  - {name: "Zapier", provider: ashby, token: zapier, startup: true, verified: true}
+  - {name: "Vercel", provider: greenhouse, token: vercel, startup: true, verified: true}
+  - {name: "Supabase", provider: ashby, token: supabase, startup: true, verified: true}
+  - {name: "Deel", provider: ashby, token: deel, startup: true, verified: true}
+  - {name: "Perplexity", provider: ashby, token: perplexity, startup: true, verified: true}
+  - {name: "Cohere", provider: ashby, token: cohere, startup: true, verified: true}
+  - {name: "Hex", provider: ashby, token: hex, startup: true, verified: true}
   # Fintech
-  - {name: "SoFi", provider: greenhouse, token: sofi}
-  - {name: "Chime", provider: greenhouse, token: chime}
-  - {name: "Block", provider: greenhouse, token: block}
-  - {name: "Wealthfront", provider: greenhouse, token: wealthfront}
-  - {name: "Marqeta", provider: greenhouse, token: marqeta}
-  - {name: "Upstart", provider: greenhouse, token: upstart}
-  - {name: "Gemini", provider: greenhouse, token: gemini}
-  - {name: "Circle", provider: greenhouse, token: circle}
-  - {name: "Kraken", provider: ashby, token: kraken}
+  - {name: "SoFi", provider: greenhouse, token: sofi, verified: true}
+  - {name: "Chime", provider: greenhouse, token: chime, verified: true}
+  - {name: "Block", provider: greenhouse, token: block, verified: true}
+  - {name: "Upstart", provider: greenhouse, token: upstart, verified: true}
+  - {name: "Gemini", provider: greenhouse, token: gemini, verified: true}
   # Health and life sciences
-  - {name: "Oscar Health", provider: greenhouse, token: oscar}
-  - {name: "Tempus", provider: greenhouse, token: tempus}
-  - {name: "Hims & Hers", provider: greenhouse, token: hims}
-  - {name: "Doximity", provider: greenhouse, token: doximity}
-  - {name: "Ro", provider: greenhouse, token: ro, startup: true}
-  - {name: "Benchling", provider: greenhouse, token: benchling, startup: true}
+  - {name: "Oscar Health", provider: greenhouse, token: oscar, verified: true}
+  - {name: "Doximity", provider: greenhouse, token: doximity, verified: true}
