@@ -35,6 +35,7 @@ storage/screenshots/*
 storage/prep_packs/*
 !storage/prep_packs/.gitkeep
 storage/diagnostics/*
+storage/embeddings/*
 storage/experiments/*
 
 # Graphify: commit the graph, skip local cache and spend logs

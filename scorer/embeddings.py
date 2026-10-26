@@ -112,9 +112,15 @@ def load_profile_embedding(digest: str, *, model: str, dimensions: int) -> list[
     if not isinstance(vector, list) or len(vector) != dimensions:
         return None
     try:
-        return [float(item) for item in vector]
+        values = [float(item) for item in vector]
     except (TypeError, ValueError):
         return None
+    # The API returns unit-length vectors. Anything else is a fixture or a damaged
+    # file, and comparing jobs against it would reject every posting.
+    norm = sum(item * item for item in values) ** 0.5
+    if not 0.98 <= norm <= 1.02:
+        return None
+    return values
 
 
 def save_profile_embedding(
