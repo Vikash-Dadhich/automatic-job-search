@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -95,6 +96,17 @@ class Settings(BaseSettings):
             "query. 1 is one planned query, not one HTTP request or one posting. "
             "That query still runs on each configured JobSpy site and Workday tenant."
         ),
+    )
+    ingest_mode: Literal["daily", "catchup"] = Field(
+        default="daily",
+        description=(
+            "daily reads roles posted in the last 36 hours. catchup reads everything "
+            "open now (30 days on search sites, no age limit on company boards)."
+        ),
+    )
+    simplify_discovery: bool = Field(
+        default=False,
+        description="Find extra company boards from the Simplify Summer 2027 product list",
     )
     enable_ats_boards: bool = Field(
         default=False,

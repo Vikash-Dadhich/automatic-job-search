@@ -34,10 +34,14 @@ from scraper.filters import evaluate
 from scraper.linkedin_jobspy import QueryExecutor, fetch_linkedin_indeed
 from scraper.models import RawPosting, to_job
 from scraper.redact import redact_error
+from scraper.simplify_list import discover_boards, fetch_simplify_rows
 from scraper.structured_jd import attach_structured_jd
 from scraper.workday_rest import fetch_all_workday
 
 log = structlog.get_logger(__name__)
+
+_CATCHUP_HOURS = 720
+_DAILY_BOARD_HOURS = 36
 
 
 @dataclass
@@ -54,6 +58,8 @@ class IngestSummary:
     partial: bool = False
     queries_failed: int = 0
     boards_not_found: list[str] = field(default_factory=list)
+    boards_discovered: int = 0
+    mode: str = "daily"
 
 
 async def _load_role_client() -> LLMClient | None:
@@ -312,7 +318,15 @@ async def run_ingestion(
     await init_db()
     targets = targets or load_targets()
     profile = profile or load_profile()
-    summary = IngestSummary(hours_old=targets.search.hours_old)
+    settings = get_settings()
+    if settings.ingest_mode == "catchup" and targets.search.hours_old < _CATCHUP_HOURS:
+        # Catch-up looks back a month so roles that opened before the first run are found.
+        targets = targets.model_copy(
+            update={
+                "search": targets.search.model_copy(update={"hours_old": _CATCHUP_HOURS}),
+            }
+        )
+    summary = IngestSummary(hours_old=targets.search.hours_old, mode=settings.ingest_mode)
     plan = build_discovery_plan(targets, capacity=search_capacity)
     log_discovery_plan(plan)
     provenance = {
@@ -373,15 +387,23 @@ async def run_ingestion(
             summary.by_source[label] = summary.by_source.get(label, 0) + len(postings)
             return True
 
-    settings = get_settings()
     use_boards = settings.enable_ats_boards if include_boards is None else include_boards
-    boards = targets.ats_boards if use_boards else []
+    boards = list(targets.ats_boards) if use_boards else []
+    board_age = settings.ats_max_age_hours
+    if board_age is None and settings.ingest_mode == "daily":
+        board_age = _DAILY_BOARD_HOURS
 
     tasks: list[asyncio.Task[list[RawPosting]]] = []
     labels: list[str] = []
 
     async def _run_boards() -> list[RawPosting]:
-        run = await fetch_all_boards(boards, max_age_hours=settings.ats_max_age_hours)
+        to_read = list(boards)
+        if settings.simplify_discovery:
+            known = {(item.provider, item.token.lower()) for item in to_read}
+            extra = discover_boards(await fetch_simplify_rows(), known)
+            summary.boards_discovered = len(extra)
+            to_read.extend(extra)
+        run = await fetch_all_boards(to_read, max_age_hours=board_age)
         summary.boards_not_found = run.not_found
         if run.failed:
             summary.errors.append(f"boards: {len(run.failed)} failed: {', '.join(run.failed)}")
@@ -420,7 +442,7 @@ async def run_ingestion(
         tasks.append(asyncio.create_task(_run_workday(), name="workday"))
         labels.append("workday")
 
-    if boards:
+    if use_boards and (boards or settings.simplify_discovery):
         tasks.append(asyncio.create_task(_run_boards(), name="boards"))
         labels.append("boards")
 
