@@ -43,7 +43,8 @@ _README = """
 <td><strong><a href="https://simplify.jobs/c/Acme">🔥 Acme</a></strong></td>
 <td>Product Manager Intern 🎓</td>
 <td>Seattle, WA<br>Remote in USA</td>
-<td><div align="center"><a href="https://job-boards.greenhouse.io/acme/jobs/55?gh_src=x"><img alt="Apply"></a>
+<td><div align="center">
+<a href="https://job-boards.greenhouse.io/acme/jobs/55?gh_src=x"><img alt="Apply"></a>
 <a href="https://simplify.jobs/p/abc"><img alt="Simplify"></a></div></td><td>2d</td>
 </tr>
 <tr>
