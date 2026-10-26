@@ -59,7 +59,7 @@ async def test_fit_call_sends_the_strict_schema(profile: Profile) -> None:
 
 
 def test_grounding_accepts_inflections_and_still_drops_invented_facts() -> None:
-    corpus = "Led platform migration. Manage roadmap with engineering partners."
+    corpus = "Team leader for the platform migration. Manage roadmap with engineering partners."
     kept = _ground(
         [
             "Leadership of the platform migration maps to the roadmap work.",
