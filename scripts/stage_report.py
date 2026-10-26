@@ -43,9 +43,9 @@ async def main() -> None:
                 .order_by(col(PipelineStageRun.id))
             )
         ).all()
-    print(f"::notice title=run {run.id}::status {run.status}, {len(stages)} stages")
-    for stage in stages:
-        print(f"::notice title=stage {stage.stage}::{describe(stage, now)}")
+    # GitHub shows only 10 annotations per step, so every stage goes on one line.
+    lines = "; ".join(f"{stage.stage}: {describe(stage, now)}" for stage in stages)
+    print(f"::notice title=run {run.id} {run.status}::{lines}")
 
 
 if __name__ == "__main__":
