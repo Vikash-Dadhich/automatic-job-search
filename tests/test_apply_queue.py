@@ -228,11 +228,23 @@ async def test_expire_closes_only_old_undecided_jobs(db_ready: Path) -> None:
     recent = await _save(
         _job("exr", status=Status.pending_review, queued_at=NOW - timedelta(days=1))
     )
-    legacy = await _save(_job("exl", status=Status.pending_review))
+    legacy_new = await _save(_job("exl", status=Status.pending_review))
     assert await expire_queue() == 1
     assert (await _load(old)).status == Status.ignored
     assert (await _load(recent)).status == Status.pending_review
-    assert (await _load(legacy)).status == Status.pending_review
+    assert (await _load(legacy_new)).status == Status.pending_review
+
+
+async def test_expire_closes_old_cards_from_before_the_queue(db_ready: Path) -> None:
+    del db_ready
+    job_id = await _save(_job("pre-queue", status=Status.pending_review))
+    async with session_scope() as session:
+        job = await get_job_by_id(session, job_id)
+        assert job is not None
+        job.updated_at = NOW - timedelta(days=18)
+        session.add(job)
+    assert await expire_queue() == 1
+    assert (await _load(job_id)).status == Status.ignored
 
 
 async def test_sync_applies_taps_then_confirms_offset(db_ready: Path) -> None:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import structlog
-from sqlalchemy import JSON, Column, DateTime, func, text, update
+from sqlalchemy import JSON, Column, DateTime, and_, func, or_, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import Field, SQLModel, UniqueConstraint, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -1332,11 +1332,17 @@ async def count_queued_since(session: AsyncSession, since: datetime) -> int:
 
 
 async def get_expired_queue_jobs(session: AsyncSession, before: datetime) -> list[Job]:
-    """pending_review jobs whose queue seat is older than ``before`` with no decision."""
+    """pending_review jobs whose queue seat is older than ``before`` with no decision.
+
+    Jobs from before the queue existed have no ``queued_at``; their last update counts.
+    """
     result = await session.exec(
         select(Job).where(
             col(Job.status) == Status.pending_review,
-            col(Job.queued_at) < before,
+            or_(
+                col(Job.queued_at) < before,
+                and_(col(Job.queued_at).is_(None), col(Job.updated_at) < before),  # type: ignore[union-attr]
+            ),
         )
     )
     return list(result.all())
