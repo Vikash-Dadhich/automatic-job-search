@@ -29,6 +29,7 @@ jobs:
         run: uv sync --frozen --no-dev
 
       - name: Run pipeline once
+        timeout-minutes: 45
         run: uv run python main.py run-once
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -72,3 +73,10 @@ jobs:
           SIMPLIFY_DISCOVERY: "true"
           # Apply queue: at most this many new cards in any 24 hours.
           QUEUE_DAILY_LIMIT: "15"
+
+      # Stage timings from the database, shown even if the step above timed out.
+      - name: Stage report
+        if: always()
+        run: uv run python scripts/stage_report.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
