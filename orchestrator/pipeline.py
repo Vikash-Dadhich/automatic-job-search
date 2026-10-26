@@ -340,7 +340,13 @@ async def _run_opened_pipeline(
             log.info("pipeline_stage_skipped", stage="apply")
 
         if do_reviews:
-            await _run_stage(summary, "reviews", _send_pending_reviews)
+            # Review cards carry an Approve = submit button for a pre-filled
+            # Workday application. With apply off there is nothing to approve.
+            if do_apply:
+                await _run_stage(summary, "reviews", _send_pending_reviews)
+            else:
+                await _note_skipped(summary, "reviews")
+                log.info("pipeline_stage_skipped", stage="reviews", reason="apply_off")
             await _run_stage(summary, "outcome_prompts", _send_outcome_prompts)
             await _run_stage(summary, "alerts", _send_pending_alerts)
         else:

@@ -134,6 +134,60 @@ async def test_pipeline_order_and_aggregation(
     assert summary.duration_ms >= 0
 
 
+async def test_review_cards_need_apply(
+    db_ready: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With apply off, no Approve = submit cards go out. Prep, outcomes and alerts still run."""
+    del db_ready
+    order: list[str] = []
+
+    async def track(name: str) -> _FakeSummary:
+        order.append(name)
+        return _FakeSummary(name)
+
+    async def boom(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("should not run")
+
+    monkeypatch.setattr(pipeline_mod, "_run_ingestion", lambda **_k: track("ingestion"))
+    monkeypatch.setattr(pipeline_mod, "_score_pending", lambda: track("scoring"))
+    monkeypatch.setattr(pipeline_mod, "_shortlist_stage", lambda: track("shortlist"))
+    monkeypatch.setattr(pipeline_mod, "_prepare_shortlisted_resumes", lambda: track("resume"))
+    monkeypatch.setattr(pipeline_mod, "_send_prep_pack", lambda *_a, **_k: track("prep"))
+    monkeypatch.setattr(pipeline_mod, "_portfolio_stage", boom)
+    monkeypatch.setattr(pipeline_mod, "_apply_pending", boom)
+    monkeypatch.setattr(pipeline_mod, "_send_pending_reviews", boom)
+    monkeypatch.setattr(pipeline_mod, "_send_outcome_prompts", lambda: track("outcome_prompts"))
+    monkeypatch.setattr(pipeline_mod, "_send_pending_alerts", lambda: track("alerts"))
+
+    summary = await run_pipeline(
+        enable_apply=False,
+        enable_reviews=True,
+        enable_prep_pack=True,
+        enable_suggestions=False,
+        enable_benchmark=False,
+    )
+    assert order == [
+        "ingestion",
+        "scoring",
+        "shortlist",
+        "resume",
+        "prep",
+        "outcome_prompts",
+        "alerts",
+    ]
+    assert summary.skipped == [
+        "suggest_generate",
+        "suggest_send",
+        "benchmark",
+        "portfolio",
+        "apply",
+        "reviews",
+    ]
+    assert "reviews" not in summary.stages
+    assert summary.stage_errors == {}
+
+
 async def test_pipeline_skips_apply_and_reviews(
     db_ready: object,
     monkeypatch: pytest.MonkeyPatch,
