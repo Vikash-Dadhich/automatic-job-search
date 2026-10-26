@@ -16,7 +16,7 @@ from core.db import Job
 from core.token_optimizer import cache_block, minify_job
 from scorer.clients import LLMClient, pop_openai_operation, push_openai_operation
 
-FIT_VERSION = "phase6-v2"
+FIT_VERSION = "phase2-v1"
 FIT_UNUSABLE_JSON = "invalid_json"
 FIT_UNUSABLE_SCHEMA = "unsupported_schema"
 FIT_UNUSABLE_FIELD = "invalid_field"
@@ -89,12 +89,66 @@ RESPONSIBILITY_MATCH 15, EDUCATION_MBA_ALIGNMENT 10,
 EXPERIENCE_LEVEL_FIT 10, LOCATION_WORK_MODE_FIT 5, REQUIREMENTS_RISK 5.
 A preferred gap must not erase an otherwise strong fit.
 
+Every dimension uses the same five judgment labels. For REQUIREMENTS_RISK the
+labels mean: confirmed_match = every stated requirement is met; transferable_match
+= requirements are met through related experience; unknown = requirements are
+vague or only preferred items are missing; gap = a required item is missing;
+conflict = the posting states something the candidate cannot meet.
+Never write any other label. Keep each note under 20 words and each list to at
+most three short items.
+
 Return JSON only:
 {"fit_score":0-100,"confidence":"high|medium|low",
 "strengths":["..."],"gaps":["..."],"evidence":["..."],
 "dimensions":{"ROLE_ALIGNMENT":{"judgment":"confirmed_match|transferable_match|unknown|gap|conflict","note":"..."}}}
 Include every dimension key. fit_score is candidate-to-JD fit only.
 """
+
+
+def _fit_json_schema() -> dict[str, Any]:
+    """Strict structured-output schema. Validation below still runs on every reply."""
+    dimension = {
+        "type": "object",
+        "properties": {
+            "judgment": {"type": "string", "enum": sorted(_JUDGMENTS)},
+            "note": {"type": "string"},
+        },
+        "required": ["judgment", "note"],
+        "additionalProperties": False,
+    }
+    lines = {"type": "array", "items": {"type": "string"}}
+    return {
+        "name": "fit_decision",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "fit_score": {"type": "integer"},
+                "confidence": {"type": "string", "enum": sorted(_CONFIDENCE)},
+                "strengths": lines,
+                "gaps": lines,
+                "evidence": lines,
+                "dimensions": {
+                    "type": "object",
+                    "properties": {name: dimension for name in DIMENSIONS},
+                    "required": list(DIMENSIONS),
+                    "additionalProperties": False,
+                },
+            },
+            "required": [
+                "fit_score",
+                "confidence",
+                "strengths",
+                "gaps",
+                "evidence",
+                "dimensions",
+            ],
+            "additionalProperties": False,
+        },
+    }
+
+
+FIT_JSON_SCHEMA = _fit_json_schema()
 
 
 class _Dimension(BaseModel):
@@ -124,6 +178,8 @@ class FitDecision:
     content_hash: str | None = None
     profile_hash: str | None = None
     legacy: bool = False
+    # True only when the model answered and the answer failed validation.
+    unusable: bool = False
 
 
 def fit_context_block(profile: Profile) -> str:
@@ -174,8 +230,11 @@ def _insufficient(job: Job) -> bool:
     return not (job.description_clean or "").strip()
 
 
-def _unavailable(job: Job, profile: Profile, reason: str) -> FitDecision:
+def _unavailable(
+    job: Job, profile: Profile, reason: str, *, unusable: bool = False
+) -> FitDecision:
     return FitDecision(
+        unusable=unusable,
         available=False,
         score=None,
         confidence="low",
@@ -196,13 +255,27 @@ def _lines(value: object) -> list[str]:
     return out[:5]
 
 
+def _stems(text: str) -> frozenset[str]:
+    return frozenset(word[:6] for word in re.findall(r"[a-z]{6,}", text.lower()))
+
+
 def _ground(lines: list[str], corpus: str) -> list[str]:
-    """Drop lines that name a specific fact absent from the profile and the JD."""
+    """Drop lines that name a specific fact absent from the profile and the JD.
+
+    A long word counts as present when the corpus has it, or has a word that
+    shares its first six letters (managed / management, leading / leadership).
+    A word with no such relative is still treated as an invented fact.
+    """
     haystack = corpus.lower()
+    stems = _stems(haystack)
     kept: list[str] = []
     for line in lines:
         tokens = re.findall(r"[a-z]{8,}", line.lower())
-        foreign = [token for token in tokens if token not in _GROUND_STOP and token not in haystack]
+        foreign = [
+            token
+            for token in tokens
+            if token not in _GROUND_STOP and token not in haystack and token[:6] not in stems
+        ]
         if foreign:
             continue
         kept.append(line)
@@ -359,6 +432,7 @@ async def evaluate_fit(
             max_tokens=max_tokens,
             temperature=0.0,
             json_mode=True,
+            json_schema=FIT_JSON_SCHEMA,
         )
     finally:
         pop_openai_operation(token)
@@ -370,5 +444,7 @@ async def evaluate_fit(
             reason=reason or FIT_UNUSABLE_SCHEMA,
             **detail,
         )
-        return _unavailable(job, profile, "Fit model returned an unusable result.")
+        return _unavailable(
+            job, profile, "Fit model returned an unusable result.", unusable=True
+        )
     return parsed
