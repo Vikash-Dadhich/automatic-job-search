@@ -223,6 +223,10 @@ async def _persist_postings(
                 filtered_out += 1
             saved = await upsert_job(session, job)
             upserted += 1
+            if not result.passed:
+                # A hard-filtered row never reaches scoring. Company lookups,
+                # eligibility, JD reading and role calls would be spent for nothing.
+                continue
             try:
                 source = trustworthy_company_source(posting.company_url)
                 await attach_company_intelligence(

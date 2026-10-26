@@ -29,10 +29,13 @@ An agent that finds Summer 2027 MBA internships in the US (product management an
 - Do not commit secrets, `.env`, personal data, resumes, generated output, or files under `graphify-out/`.
 - `test_production_workflow_file_is_unchanged` compares `pipeline.yml` with `HEAD`, so tests fail until a workflow edit is committed.
 
-## Known state (as of 25 Oct 2026, commit dc49f28)
+## Known state (as of 25 Oct 2026, Phase 1)
 
-- CI is red only because `tests/test_fit.py::test_phase6_v1_fit_is_stale` still expects `FIT_VERSION == "phase6-v2"` while the code says `phase6-v3`.
-- Production has no OpenAI, scoring, search or ingestion caps. The trial workflow sets them all.
+- `FIT_VERSION` is back to `phase6-v2`. The earlier `v3` bump came with no fit change and would have forced every stored job to be re-scored.
+- Production sets spend caps in `pipeline.yml` (search capacity 40, score budget 60, 150 OpenAI requests, 60 role calls, posting and embedding caps). Raise them only with cost evidence.
+- Hard-filtered rows are saved but not enriched (no company lookup, eligibility, JD reading or role call).
+- Review cards with "Approve = submit" are only sent when `ENABLE_APPLY` is true.
+- Plan for the next phases lives in the owner's private project (apply-agent-plan).
 - Two known fit-validation problems: an invalid judgment on `REQUIREMENTS_RISK`, and a grounding check that drops ordinary English words.
 - The scheduled run is not active right now. Do not turn it back on without a readiness review.
 

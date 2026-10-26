@@ -57,3 +57,13 @@ jobs:
           OPENAI_WRITER_MODEL: gpt-5-mini
           # Score and link only. Set true to draft Tier 1 outreach and cover letters.
           TIER_ONE_DRAFTS_ENABLED: "false"
+          # Spend and volume caps. Without these every limit is unlimited.
+          # About $0.0025 per OpenAI response in the Oct trial, so 150 requests
+          # caps one run at roughly $0.40. Raise only with cost evidence.
+          # The plan is deterministic: 40 keeps each family's primary phrases.
+          SEARCH_CAPACITY: "40"
+          INGEST_POSTING_CAP: "1500"
+          EMBED_MAX_INPUTS: "1500"
+          ROLE_CLASSIFY_MAX_CALLS: "60"
+          SCORE_BUDGET: "60"
+          OPENAI_MAX_REQUESTS: "150"

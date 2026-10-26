@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -294,6 +295,16 @@ def test_production_workflow_flags() -> None:
     assert "OPENAI_SCORER_MODEL: gpt-5-mini" in text
     assert "OPENAI_WRITER_MODEL: gpt-5-mini" in text
     assert 'TIER_ONE_DRAFTS_ENABLED: "false"' in text
-    assert "SCORE_BUDGET" not in text
+    for cap in (
+        "SEARCH_CAPACITY",
+        "INGEST_POSTING_CAP",
+        "EMBED_MAX_INPUTS",
+        "ROLE_CLASSIFY_MAX_CALLS",
+        "SCORE_BUDGET",
+        "OPENAI_MAX_REQUESTS",
+    ):
+        match = re.search(rf'^\s+{cap}: "(\d+)"$', text, re.MULTILINE)
+        assert match is not None, f"{cap} must be set in production"
+        assert int(match.group(1)) > 0, cap
     assert "VECTOR_GATE" not in text
     assert "TIMEZONE: America/Los_Angeles" in text
