@@ -21,6 +21,7 @@ from scraper.ats_boards import (
     BoardRun,
     board_url,
     fetch_all_boards,
+    is_business_role,
     keep_posting,
     parse_board,
 )
@@ -148,6 +149,27 @@ def test_keep_posting_needs_an_internship_signal_and_respects_age() -> None:
     assert keep_posting(_posting("Product Manager Intern", old), max_age_hours=None)
     assert not keep_posting(_posting("Product Manager Intern", old), max_age_hours=48, now=_NOW)
     assert keep_posting(_posting("Product Manager Intern", None), max_age_hours=48, now=_NOW)
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Product Manager Intern", True),
+        ("Associate Product Manager Intern", True),
+        ("Technical Product Manager Intern", True),
+        ("Strategic Finance & Analytics Intern (MBA)", True),
+        ("Business Operations Intern", True),
+        ("Management Consulting Intern", True),
+        ("Software Engineer Intern (Summer 2027)", False),
+        ("PhD Intern, Data Science", False),
+        ("Data Engineer Intern", False),
+        ("Product Design Intern (2027)", False),
+        ("Accounting Intern", False),
+        ("Machine Learning Intern", False),
+    ],
+)
+def test_boards_keep_business_roles_only(title: str, expected: bool) -> None:
+    assert is_business_role(title) is expected
 
 
 def test_board_config_is_validated() -> None:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -180,6 +181,26 @@ def parse_board(board: AtsBoard, data: Any) -> list[RawPosting]:
     return _PARSERS[board.provider](board, data)
 
 
+# Boards list every role at a company, so a title also has to look like a business role.
+# The search queries already do this for LinkedIn and Indeed.
+_BUSINESS_TITLE = re.compile(
+    r"product|strateg|consult|business|operations|marketing|program|project|analyst|growth|"
+    r"partnership|finance|\bmba\b|associate|transformation|chief of staff|commercial|"
+    r"go[- ]to[- ]market|\bgtm\b|corporate development|general management",
+    re.IGNORECASE,
+)
+_NOT_BUSINESS_TITLE = re.compile(
+    r"software|engineer|developer|scientist|\bphd\b|research|machine learning|\bml\b|"
+    r"designer|design intern|product design|hardware|security|accountant|accounting|"
+    r"legal|counsel|recruit|technician|mechanic|nurse|clinical",
+    re.IGNORECASE,
+)
+
+
+def is_business_role(title: str) -> bool:
+    return bool(_BUSINESS_TITLE.search(title)) and not _NOT_BUSINESS_TITLE.search(title)
+
+
 def keep_posting(
     posting: RawPosting,
     *,
@@ -187,6 +208,8 @@ def keep_posting(
     now: datetime | None = None,
 ) -> bool:
     if not has_internship_signal(posting.title):
+        return False
+    if not is_business_role(posting.title):
         return False
     if max_age_hours is not None and posting.posted_at is not None:
         cutoff = (now or datetime.now(UTC)) - timedelta(hours=max_age_hours)
