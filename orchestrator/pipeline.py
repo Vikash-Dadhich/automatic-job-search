@@ -14,6 +14,7 @@ from automation.runner import apply_pending
 from bot.alerts import send_pending_alerts
 from bot.outcomes import send_pending_outcome_prompts
 from bot.prep import send_prep_pack
+from bot.queue import expire_queue, send_queue_cards, sync_telegram
 from bot.review import send_pending_reviews
 from bot.suggest import send_pending_suggestions
 from config.diagnostics import effective_baseline, write_effective_baseline
@@ -92,6 +93,19 @@ _send_pending_reviews = send_pending_reviews
 _send_outcome_prompts = send_pending_outcome_prompts
 _send_pending_alerts = send_pending_alerts
 _send_pending_suggestions = send_pending_suggestions
+_sync_telegram = sync_telegram
+_expire_queue = expire_queue
+_send_queue_cards = send_queue_cards
+
+
+def _queue_enabled(settings: Any, *, do_apply: bool, do_reviews: bool) -> bool:
+    """Queue cards replace Approve = submit cards when apply is off and Telegram is set up."""
+    return bool(
+        do_reviews
+        and not do_apply
+        and settings.telegram_bot_token
+        and settings.telegram_chat_id
+    )
 
 
 @dataclass
@@ -287,6 +301,12 @@ async def _run_opened_pipeline(
     )
     log.info("monitoring_run_started", run_id=run_id)
 
+    use_queue = _queue_enabled(settings, do_apply=do_apply, do_reviews=do_reviews)
+    if use_queue:
+        # Taps since the last run free seats before the shortlist fills them again.
+        await _run_stage(summary, "telegram_sync", _sync_telegram)
+        await _run_stage(summary, "queue_expiry", _expire_queue)
+
     await _run_stage(summary, "ingestion", _ingest_stage)
     await _run_stage(summary, "scoring", _score_pending)
     await _run_stage(summary, "shortlist", _shortlist_stage)
@@ -344,6 +364,9 @@ async def _run_opened_pipeline(
             # Workday application. With apply off there is nothing to approve.
             if do_apply:
                 await _run_stage(summary, "reviews", _send_pending_reviews)
+            elif use_queue:
+                await _run_stage(summary, "queue", _send_queue_cards)
+                await _note_skipped(summary, "reviews")
             else:
                 await _note_skipped(summary, "reviews")
                 log.info("pipeline_stage_skipped", stage="reviews", reason="apply_off")

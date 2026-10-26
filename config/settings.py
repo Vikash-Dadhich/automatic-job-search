@@ -156,6 +156,21 @@ class Settings(BaseSettings):
         ge=128,
         description="max_output_tokens for scoring (includes Gemini thinking tokens)",
     )
+    queue_daily_limit: int = Field(
+        default=15,
+        ge=1,
+        description="Most jobs that may take an apply-queue seat in any rolling 24 hours",
+    )
+    queue_expiry_days: int = Field(
+        default=7,
+        ge=1,
+        description="Days a queued job waits for Applied/Skip/Later before it expires",
+    )
+    queue_snooze_days: int = Field(
+        default=3,
+        ge=1,
+        description="Days a job tapped Later stays out of the queue",
+    )
     fit_max_attempts: int = Field(
         default=3,
         ge=1,

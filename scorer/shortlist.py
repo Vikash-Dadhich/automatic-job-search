@@ -9,14 +9,23 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from core.db import Job, Status, get_job_by_id, get_jobs_by_status, init_db, session_scope
+from config.settings import get_settings
+from core.db import (
+    Job,
+    Status,
+    count_queued_since,
+    get_job_by_id,
+    get_jobs_by_status,
+    init_db,
+    session_scope,
+)
 from core.textmatch import company_tokens
 from scorer.priority import sort_by_priority
 
@@ -268,6 +277,15 @@ def select_shortlist(
     ]
 
 
+def _utc(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _awake(job: Job, now: datetime) -> bool:
+    """A job tapped Later stays out of the queue until its snooze ends."""
+    return job.snoozed_until is None or _utc(job.snoozed_until) <= now
+
+
 async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistSummary:
     """Move the selected staged jobs to pending_review. Other statuses stay as they are."""
     await init_db()
@@ -276,9 +294,16 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
     async with session_scope() as session:
         staged = await get_jobs_by_status(session, Status.staged)
         pending = await get_jobs_by_status(session, Status.pending_review)
-    unranked = sum(1 for job in staged if job.priority_score is None)
-    picks = select_shortlist(staged, config=settings, occupied=len(pending))
     now = datetime.now(UTC)
+    staged = [job for job in staged if _awake(job, now)]
+    unranked = sum(1 for job in staged if job.priority_score is None)
+    # Seats are the smaller of free review slots and what is left of the daily cap.
+    max_size = int(settings["shortlist"]["max_size"])
+    async with session_scope() as session:
+        taken_today = await count_queued_since(session, now - timedelta(hours=24))
+    daily_left = max(0, get_settings().queue_daily_limit - taken_today)
+    open_seats = min(max(0, max_size - len(pending)), daily_left)
+    picks = select_shortlist(staged, config=settings, occupied=max_size - open_seats)
     chosen: list[int] = []
     for pick in picks:
         if pick.job.id is None:
@@ -292,6 +317,8 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
             target.shortlist_rank = pick.rank
             target.shortlist_reason = pick.reason
             target.shortlist_config_hash = digest
+            target.queued_at = now
+            target.snoozed_until = None
             target.updated_at = now
             session.add(target)
             chosen.append(pick.job.id)
