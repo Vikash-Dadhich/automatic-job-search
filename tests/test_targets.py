@@ -55,7 +55,10 @@ def test_load_targets_defaults() -> None:
     assert targets.search.hours_old == 36
     assert "linkedin" in targets.search.sites
     names = [tenant.name for tenant in targets.active_workday_tenants()]
-    assert names == ["NVIDIA", "Salesforce", "Workday", "Zillow", "Boeing", "Adobe"]
+    assert names[:6] == ["NVIDIA", "Salesforce", "Workday", "Zillow", "Boeing", "Adobe"]
+    assert {"Accenture", "PwC", "Guidehouse", "Huron", "Visa"} <= set(names)
+    # Each Workday site runs two broad searches; the title gate does the narrowing.
+    assert all(t.search_terms == ["intern", "MBA"] for t in targets.active_workday_tenants())
 
 
 def test_search_config_accepts_all_supported_sites() -> None:
