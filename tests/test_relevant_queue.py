@@ -198,6 +198,7 @@ async def test_apply_shortlist_uses_mix_when_enabled(
     del db_ready
     monkeypatch.setenv("QUEUE_MIX", "true")
     monkeypatch.setenv("QUEUE_DAILY_LIMIT", "5")
+    monkeypatch.setenv("QUEUE_HIGH_FIT_SCORE", "100")
     get_settings.cache_clear()
     for i in range(6):
         await _save(_job("Data Engineer Intern", 99 - i))
@@ -292,3 +293,40 @@ async def test_resend_sends_waiting_cards_again(db_ready: Path) -> None:
     sent = await resend_queue(TelegramClient(transport=transport, chat_id="999"))
     assert sent == 1
     assert [c["method"] for c in transport.calls].count("sendMessage") == 2
+
+
+def test_high_fit_jobs_skip_the_daily_limit() -> None:
+    strong = [_job("Product Manager Intern", 90 - i) for i in range(5)]
+    strong += [_job("Consulting Intern", 85)]
+    weak = [_job("Strategy Intern", 70 - i) for i in range(5)]
+    picks = select_mix(strong + weak, seats=2, high_fit=80)
+    reasons = [pick.reason for pick in picks]
+    assert reasons.count("selected_high_fit") == 6
+    assert len(picks) == 8
+    none_left = select_mix(strong + weak, seats=0, high_fit=80)
+    assert len(none_left) == 6
+    assert len(select_mix(strong + weak, seats=0)) == 0
+
+
+def test_high_fit_still_respects_company_cap() -> None:
+    jobs = [_job(f"Product Manager Intern, Team {n}", 95, company="Acme") for n in "ABCD"]
+    picks = select_mix(jobs, seats=0, high_fit=80, max_per_company=2)
+    assert len(picks) == 2
+
+
+def test_posted_label() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from bot.queue import posted_label
+
+    now = datetime(2026, 10, 27, 12, tzinfo=UTC)
+    assert posted_label(_job("PM Intern", 80, posted_at=now - timedelta(hours=3)), now) == (
+        "Posted today"
+    )
+    assert posted_label(_job("PM Intern", 80, posted_at=now - timedelta(days=1, hours=1)), now) == (
+        "Posted yesterday"
+    )
+    assert posted_label(_job("PM Intern", 80, posted_at=now - timedelta(days=5)), now) == (
+        "Posted 5 days ago"
+    )
+    assert posted_label(_job("PM Intern", 80), now) is None

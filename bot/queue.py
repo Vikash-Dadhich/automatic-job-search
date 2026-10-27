@@ -103,6 +103,24 @@ def build_queue_keyboard(job_id: int, url: str | None = None) -> dict[str, Any]:
     return {"inline_keyboard": rows}
 
 
+def _deadline_label(job: Job) -> str | None:
+    deadline = find_deadline(job.description_clean)
+    return f"Apply by {html.escape(deadline)}" if deadline else None
+
+
+def posted_label(job: Job, now: datetime | None = None) -> str | None:
+    """How fresh the posting is. Early applications matter most for product roles."""
+    if job.posted_at is None:
+        return None
+    posted = job.posted_at if job.posted_at.tzinfo else job.posted_at.replace(tzinfo=UTC)
+    days = ((now or datetime.now(UTC)) - posted).days
+    if days <= 0:
+        return "Posted today"
+    if days == 1:
+        return "Posted yesterday"
+    return f"Posted {days} days ago"
+
+
 def build_queue_text(job: Job) -> str:
     """A card is just the job: title, company, place, and a deadline when one is stated."""
     title = html.escape((job.title or "").strip() or "Untitled role")
@@ -112,20 +130,22 @@ def build_queue_text(job: Job) -> str:
     lines = [f"<b>{title}</b>"]
     if where:
         lines.append(where)
-    deadline = find_deadline(job.description_clean)
-    if deadline:
-        lines.append(f"Apply by {html.escape(deadline)}")
+    extra = [part for part in (posted_label(job), _deadline_label(job)) if part]
+    if extra:
+        lines.append(" · ".join(extra))
     text = "\n".join(lines)
     return text if len(text) <= MESSAGE_MAX else text[: MESSAGE_MAX - 1] + "…"
 
 
-def build_header(counts: dict[str, int], waiting: int) -> str:
+def build_header(counts: dict[str, int], waiting: int, fresh: int = 0) -> str:
     total = sum(counts.values())
     noun = "role" if total == 1 else "roles"
     parts = [f"{_GROUP_LABELS.get(name, name)} {n}" for name, n in counts.items() if n]
     lines = [f"<b>{total} new {noun} to apply to today</b>"]
     if parts:
         lines.append(" · ".join(parts))
+    if fresh:
+        lines.append(f"{fresh} posted in the last day. Those are worth doing first.")
     if waiting:
         lines.append(f"{waiting} still open from earlier days.")
     lines.append("Tap Applied after you submit. Later hides a role for a few days.")
@@ -172,7 +192,10 @@ async def send_queue_cards(
     counts: dict[str, int] = {}
     for group, _job in ordered:
         counts[group] = counts.get(group, 0) + 1
-    await client.send_message(build_header(counts, max(0, waiting)), parse_mode="HTML")
+    fresh = sum(
+        1 for _group, job in ordered if posted_label(job) in {"Posted today", "Posted yesterday"}
+    )
+    await client.send_message(build_header(counts, max(0, waiting), fresh), parse_mode="HTML")
     answers_on = get_settings().kit_answers
     for _group, job in ordered:
         assert job.id is not None

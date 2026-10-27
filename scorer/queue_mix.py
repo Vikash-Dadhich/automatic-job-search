@@ -24,6 +24,7 @@ from scraper.title_family import TARGET_FAMILIES, title_family
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "queue_mix.yaml"
 SELECTED_BY_MIX = "selected_by_mix"
 SELECTED_BY_SPILL = "selected_by_spill"
+SELECTED_HIGH_FIT = "selected_high_fit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,15 +132,17 @@ def select_mix(
     mix: Mix | None = None,
     max_per_company: int = 2,
     taken: list[Job] | None = None,
+    high_fit: int | None = None,
 ) -> list[MixPick]:
-    """Choose up to ``seats`` staged jobs following the mix.
+    """Choose staged jobs following the mix.
 
-    ``taken`` are jobs already waiting in the queue; they count toward the company
-    cap and duplicate check so the same role never shows up twice.
+    Every job scoring ``high_fit`` or more is picked first and does not use a
+    seat, so strong roles are never held back by the daily limit. ``seats`` then
+    caps the rest. ``taken`` are jobs already waiting in the queue; they count
+    toward the company cap and duplicate check so a role never shows up twice.
     """
     mix = mix or load_mix()
-    if seats <= 0:
-        return []
+    seats = max(0, seats)
     pool = [
         job
         for job in jobs
@@ -171,6 +174,15 @@ def select_mix(
             titles.add((key, _norm_title(job.title)))
         return True
 
+    if high_fit is not None:
+        for job in ordered:
+            if (job.score or 0) < high_fit:
+                break
+            group = _group_of(job, mix)
+            assert group is not None
+            _try(job, group, SELECTED_HIGH_FIT)
+    strong = len(picks)
+
     plan = seat_plan(mix, seats)
     for group in mix.groups:
         want = plan[group.name]
@@ -184,7 +196,7 @@ def select_mix(
 
     for name in mix.spill_order:
         for job in ordered:
-            if len(picks) >= seats:
+            if len(picks) - strong >= seats:
                 break
             if id(job) in chosen or _group_of(job, mix) != name:
                 continue
