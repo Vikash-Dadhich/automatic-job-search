@@ -1,0 +1,20 @@
+# Daily apply queue split by role type (read from the job title).
+# Shares add up to 1.0. Seats a group cannot fill go to the best remaining
+# jobs from the other groups, never to off-target roles.
+groups:
+  product:
+    share: 0.40
+    families: [PRODUCT_MANAGEMENT]
+  consulting:
+    share: 0.40
+    families: [CONSULTING]
+  other:
+    share: 0.20
+    families:
+      - STRATEGY_TRANSFORMATION
+      - PRODUCT_MARKETING
+      - MARKETING
+      - PROGRAM_PROJECT_OPERATIONS
+      - GENERAL_MBA
+# Leftover seats go to these groups in this order.
+spill_order: [product, other, consulting]

@@ -43,7 +43,7 @@ jobs:
           ENABLE_BENCHMARK: "false"
           ENABLE_LINKEDIN_SCRAPE: "false"
           ENABLE_REVIEWS: "true"
-          ENABLE_PREP_PACK: "true"
+          ENABLE_PREP_PACK: "false"
           # Full-mode prep packs only. Brief mode sends one shortlist file.
           PREP_PACK_LIMIT: "20"
           # Brief mode: one text file of the persisted shortlist (shortlist_rank).
@@ -73,6 +73,10 @@ jobs:
           SIMPLIFY_DISCOVERY: "true"
           # Apply queue: at most this many new cards in any 24 hours.
           QUEUE_DAILY_LIMIT: "15"
+          # Only product, consulting, strategy and business titles are scored, and the
+          # queue follows config/queue_mix.yaml (40% product, 40% consulting, 20% other).
+          TARGET_TITLES_ONLY: "true"
+          QUEUE_MIX: "true"
 
       # Stage timings from the database, shown even if the step above timed out.
       - name: Stage report

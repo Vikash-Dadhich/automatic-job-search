@@ -96,17 +96,20 @@ def test_callback_round_trip_and_detection() -> None:
         decode_queue_callback("v1|ok|1")
 
 
-def test_keyboard_has_three_buttons_and_no_submit() -> None:
-    row = build_queue_keyboard(5)["inline_keyboard"][0]
-    assert [button["text"] for button in row] == ["Applied", "Skip", "Later"]
-    assert all(len(button["callback_data"].encode()) <= 64 for button in row)
+def test_keyboard_has_open_button_and_three_actions_and_no_submit() -> None:
+    rows = build_queue_keyboard(5, "https://x.example/apply")["inline_keyboard"]
+    assert rows[0] == [{"text": "Open job", "url": "https://x.example/apply"}]
+    assert [button["text"] for button in rows[1]] == ["Applied", "Skip", "Later"]
+    assert all(len(button["callback_data"].encode()) <= 64 for button in rows[1])
+    assert len(build_queue_keyboard(5, "not a url")["inline_keyboard"]) == 1
 
 
-def test_card_text_has_link_and_reason() -> None:
-    text = build_queue_text(_job("a", url="https://x.example/apply"))
-    assert "https://x.example/apply" in text
-    assert "Matches product background" in text
-    assert "yourself" in text
+def test_card_is_just_the_job() -> None:
+    text = build_queue_text(_job("a", company="A & B", url="https://x.example/apply"))
+    assert text.startswith("<b>Product Manager Intern</b>")
+    assert "A &amp; B · Seattle, WA" in text
+    assert "Matches product background" not in text
+    assert "Fit" not in text and "Why" not in text
 
 
 async def test_daily_cap_limits_new_seats(
@@ -159,8 +162,12 @@ async def test_send_cards_once_and_record_message(db_ready: Path) -> None:
     first = await send_queue_cards(client)
     assert first.sent == 1
     sent = [call for call in transport.calls if call["method"] == "sendMessage"]
-    assert len(sent) == 1
-    assert "https://jobs.example.com/send" in sent[0]["payload"]["text"]
+    assert len(sent) == 2
+    header, card = sent[0]["payload"], sent[1]["payload"]
+    assert "1 new role to apply to today" in header["text"]
+    assert "disable_notification" not in header
+    assert card["disable_notification"] is True
+    assert card["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://jobs.example.com/send"
     assert (await _load(job_id)).review_message_id == 43
     again = await send_queue_cards(client)
     assert again.sent == 0

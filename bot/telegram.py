@@ -238,12 +238,15 @@ class TelegramClient:
         reply_markup: dict[str, Any] | None = None,
         parse_mode: str | None = None,
         disable_web_page_preview: bool = True,
+        disable_notification: bool = False,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "chat_id": self._require_chat_id(chat_id),
             "text": text,
             "disable_web_page_preview": disable_web_page_preview,
         }
+        if disable_notification:
+            payload["disable_notification"] = True
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         if parse_mode:
@@ -334,6 +337,13 @@ class TelegramClient:
             payload["parse_mode"] = parse_mode
         result = await self._resolve_transport().post("editMessageCaption", payload)
         return result.get("result") or {}
+
+    async def delete_message(self, *, chat_id: str | int, message_id: int) -> bool:
+        """Delete one bot message. Telegram allows this only within 48 hours of sending."""
+        result = await self._resolve_transport().post(
+            "deleteMessage", {"chat_id": str(chat_id), "message_id": message_id}
+        )
+        return bool(result.get("result"))
 
     async def edit_message_text(
         self,

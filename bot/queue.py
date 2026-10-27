@@ -7,6 +7,7 @@ through ``sync_telegram``.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -24,11 +25,12 @@ from core.db import (
     Status,
     get_expired_queue_jobs,
     get_job_by_id,
+    get_jobs_by_status,
     get_unsent_pending_reviews,
     init_db,
     session_scope,
 )
-from resume.kit import build_answers, has_kit, kit_lines
+from resume.kit import build_answers, find_deadline, has_kit
 
 log = structlog.get_logger(__name__)
 
@@ -40,6 +42,21 @@ class QueueAction(StrEnum):
     applied = "a"
     skip = "s"
     later = "l"
+
+
+_DONE = {
+    QueueAction.applied: "Applied",
+    QueueAction.skip: "Skipped",
+    QueueAction.later: "Back in a few days",
+}
+
+
+def _decided_text(title: str | None, company: str | None, action: QueueAction) -> str:
+    """What a card turns into after a tap: one quiet line, crossed out when it is done."""
+    name = html.escape(" · ".join(part for part in (title, company) if part))
+    if action == QueueAction.later:
+        return f"{name}\n{_DONE[action]}"
+    return f"<s>{name}</s>\n{_DONE[action]}"
 
 
 _LABELS = {
@@ -66,43 +83,53 @@ def is_queue_callback(data: str) -> bool:
     return (data or "").startswith(f"{_PREFIX}|")
 
 
-def build_queue_keyboard(job_id: int) -> dict[str, Any]:
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "Applied",
-                    "callback_data": encode_queue_callback(QueueAction.applied, job_id),
-                },
-                {
-                    "text": "Skip",
-                    "callback_data": encode_queue_callback(QueueAction.skip, job_id),
-                },
-                {
-                    "text": "Later",
-                    "callback_data": encode_queue_callback(QueueAction.later, job_id),
-                },
-            ]
+_GROUP_LABELS = {"product": "Product", "consulting": "Consulting", "other": "Strategy & more"}
+
+
+def build_queue_keyboard(job_id: int, url: str | None = None) -> dict[str, Any]:
+    rows: list[list[dict[str, str]]] = []
+    if url and url.startswith(("https://", "http://")):
+        rows.append([{"text": "Open job", "url": url}])
+    rows.append(
+        [
+            {
+                "text": "Applied",
+                "callback_data": encode_queue_callback(QueueAction.applied, job_id),
+            },
+            {"text": "Skip", "callback_data": encode_queue_callback(QueueAction.skip, job_id)},
+            {"text": "Later", "callback_data": encode_queue_callback(QueueAction.later, job_id)},
         ]
-    }
+    )
+    return {"inline_keyboard": rows}
 
 
 def build_queue_text(job: Job) -> str:
-    """Short card: what the role is, why it fits, and the direct link."""
-    tier = job.tier.value if job.tier else "?"
-    score = job.score if job.score is not None else "?"
-    lines = [
-        f"{job.title} @ {job.company}",
-        f"Location: {job.location or 'N/A'}",
-        f"Fit {score} | Tier {tier} | {job.role_family or 'role unknown'}",
-    ]
-    if job.justification:
-        lines.append("Why: " + "; ".join(str(item) for item in job.justification[:2]))
-    lines.extend(kit_lines(job))
-    lines.append(f"Apply: {job.url}")
-    lines.append("Tap Applied once you have submitted it yourself.")
+    """A card is just the job: title, company, place, and a deadline when one is stated."""
+    title = html.escape((job.title or "").strip() or "Untitled role")
+    where = " · ".join(
+        html.escape(part.strip()) for part in (job.company, job.location) if part and part.strip()
+    )
+    lines = [f"<b>{title}</b>"]
+    if where:
+        lines.append(where)
+    deadline = find_deadline(job.description_clean)
+    if deadline:
+        lines.append(f"Apply by {html.escape(deadline)}")
     text = "\n".join(lines)
     return text if len(text) <= MESSAGE_MAX else text[: MESSAGE_MAX - 1] + "…"
+
+
+def build_header(counts: dict[str, int], waiting: int) -> str:
+    total = sum(counts.values())
+    noun = "role" if total == 1 else "roles"
+    parts = [f"{_GROUP_LABELS.get(name, name)} {n}" for name, n in counts.items() if n]
+    lines = [f"<b>{total} new {noun} to apply to today</b>"]
+    if parts:
+        lines.append(" · ".join(parts))
+    if waiting:
+        lines.append(f"{waiting} still open from earlier days.")
+    lines.append("Tap Applied after you submit. Later hides a role for a few days.")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -112,26 +139,45 @@ class QueueSummary:
     error_details: list[str] = field(default_factory=list)
 
 
+def _ordered(jobs: list[Job]) -> list[tuple[str, Job]]:
+    from scorer.queue_mix import load_mix, queue_group
+
+    mix = load_mix()
+    rank = {group.name: index for index, group in enumerate(mix.groups)}
+    tagged = [(queue_group(job, mix) or "other", job) for job in jobs]
+    return sorted(tagged, key=lambda item: (rank.get(item[0], 99), -(item[1].score or 0)))
+
+
 async def send_queue_cards(
     client: TelegramClient | None = None,
     *,
     limit: int | None = None,
     resolver: AnswerResolver | None = None,
 ) -> QueueSummary:
-    """Send a card for every pending_review job that has none yet.
+    """Send today's new cards: one short header, then one quiet card per job.
 
-    Each new card also gets two drafted answers. A model failure only skips the answers.
+    Only the header makes the phone buzz. Drafted answers are sent only when
+    KIT_ANSWERS is on.
     """
     await init_db()
     client = client or TelegramClient()
     summary = QueueSummary()
     async with session_scope() as session:
-        jobs = await get_unsent_pending_reviews(session, limit=limit)
-    for job in jobs:
-        if job.id is None:
-            continue
+        jobs = [job for job in await get_unsent_pending_reviews(session, limit=limit) if job.id]
+        waiting = len(await get_jobs_by_status(session, Status.pending_review)) - len(jobs)
+    if not jobs:
+        log.info("send_queue_cards_empty")
+        return summary
+    ordered = _ordered(jobs)
+    counts: dict[str, int] = {}
+    for group, _job in ordered:
+        counts[group] = counts.get(group, 0) + 1
+    await client.send_message(build_header(counts, max(0, waiting)), parse_mode="HTML")
+    answers_on = get_settings().kit_answers
+    for _group, job in ordered:
+        assert job.id is not None
         try:
-            if not has_kit(job):
+            if answers_on and not has_kit(job):
                 try:
                     payload = await build_answers(job, resolver)
                 except Exception as exc:
@@ -140,7 +186,10 @@ async def send_queue_cards(
                 if payload:
                     job.application_answers = payload
             result = await client.send_message(
-                build_queue_text(job), reply_markup=build_queue_keyboard(job.id)
+                build_queue_text(job),
+                reply_markup=build_queue_keyboard(job.id, job.url),
+                parse_mode="HTML",
+                disable_notification=True,
             )
             message_id = result.get("message_id")
             if message_id is None:
@@ -157,12 +206,17 @@ async def send_queue_cards(
                     target.application_answers = job.application_answers
                 target.updated_at = datetime.now(UTC)
                 session.add(target)
-            answers_text = format_answers_message(job)
-            if answers_text:
-                try:
-                    await client.send_message(answers_text, chat_id=chat_id or None)
-                except Exception as exc:
-                    log.warning("queue_answers_send_failed", job_id=job.id, error=str(exc)[:100])
+            if answers_on:
+                answers_text = format_answers_message(job)
+                if answers_text:
+                    try:
+                        await client.send_message(
+                            answers_text, chat_id=chat_id or None, disable_notification=True
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "queue_answers_send_failed", job_id=job.id, error=str(exc)[:100]
+                        )
             summary.sent += 1
         except Exception as exc:
             log.warning("send_queue_card_failed", job_id=job.id, error=str(exc)[:200])
@@ -255,8 +309,9 @@ async def handle_queue_callback(
             await client.edit_message_text(
                 chat_id=edit_chat,
                 message_id=int(message_id),
-                text=f"{title} @ {company}\n{_LABELS[action]}",
+                text=_decided_text(title, company, action),
                 reply_markup={"inline_keyboard": []},
+                parse_mode="HTML",
             )
         except Exception as exc:
             log.warning("queue_edit_failed", job_id=job_id, error=str(exc)[:200])

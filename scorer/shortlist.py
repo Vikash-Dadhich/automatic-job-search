@@ -303,7 +303,21 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
         taken_today = await count_queued_since(session, now - timedelta(hours=24))
     daily_left = max(0, get_settings().queue_daily_limit - taken_today)
     open_seats = min(max(0, max_size - len(pending)), daily_left)
-    picks = select_shortlist(staged, config=settings, occupied=max_size - open_seats)
+    if get_settings().queue_mix:
+        from scorer.queue_mix import select_mix
+
+        mixed = select_mix(
+            staged,
+            seats=open_seats,
+            max_per_company=int(settings["shortlist"]["max_per_company"]),
+            taken=list(pending),
+        )
+        picks = [
+            ShortlistPick(job=item.job, rank=index, reason=item.reason)
+            for index, item in enumerate(mixed, start=1)
+        ]
+    else:
+        picks = select_shortlist(staged, config=settings, occupied=max_size - open_seats)
     chosen: list[int] = []
     for pick in picks:
         if pick.job.id is None:

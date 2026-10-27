@@ -287,7 +287,8 @@ def test_production_workflow_flags() -> None:
     assert 'ENABLE_BENCHMARK: "false"' in text
     assert 'ENABLE_LINKEDIN_SCRAPE: "false"' in text
     assert 'ENABLE_REVIEWS: "true"' in text
-    assert 'ENABLE_PREP_PACK: "true"' in text
+    # The queue cards replace the shortlist file, so prep packs stay off.
+    assert 'ENABLE_PREP_PACK: "false"' in text
     assert 'PREP_PACK_BRIEF: "true"' in text
     assert 'PREP_PACK_LIMIT: "20"' in text
     assert 'ENABLE_SUGGESTIONS: "false"' in text
