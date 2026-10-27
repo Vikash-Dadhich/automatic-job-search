@@ -106,9 +106,15 @@ def _group_of(job: Job, mix: Mix) -> str | None:
     return None
 
 
+def _company_key(company: str | None) -> tuple[str, ...]:
+    """Employer tokens without bracketed aliases, so "Boston Consulting Group (BCG)"
+    and "Boston Consulting Group" count as one company."""
+    return company_tokens(re.sub(r"\(.*?\)|\[.*?\]", " ", company or ""))
+
+
 def _norm_title(title: str | None) -> str:
     text = re.sub(r"\(.*?\)|\[.*?\]", " ", (title or "").lower())
-    text = re.sub(r"\b(20\d\d|summer|intern(ship)?|mba)\b", " ", text)
+    text = re.sub(r"\b(20\d\d|summer|intern(ship)?|mba|us|usa)\b", " ", text)
     return re.sub(r"[^a-z]+", " ", text).strip()
 
 
@@ -143,7 +149,7 @@ def select_mix(
     counts: dict[tuple[str, ...], int] = {}
     titles: set[tuple[tuple[str, ...], str]] = set()
     for job in taken or []:
-        key = company_tokens(job.company)
+        key = _company_key(job.company)
         if key:
             counts[key] = counts.get(key, 0) + 1
             titles.add((key, _norm_title(job.title)))
@@ -152,7 +158,7 @@ def select_mix(
     chosen: set[int] = set()
 
     def _try(job: Job, group: str, reason: str) -> bool:
-        key = company_tokens(job.company)
+        key = _company_key(job.company)
         if key:
             if counts.get(key, 0) >= max_per_company:
                 return False

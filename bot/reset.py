@@ -82,3 +82,20 @@ async def reset_queue(client: TelegramClient | None = None) -> ResetSummary:
         dropped=summary.dropped,
     )
     return summary
+
+
+async def resend_queue(client: TelegramClient) -> int:
+    """Send the waiting cards again, for example after the chat history was cleared.
+
+    Old card messages are left alone; only the record of having sent them is cleared.
+    """
+    from bot.queue import send_queue_cards
+
+    await init_db()
+    async with session_scope() as session:
+        for job in await get_jobs_by_status(session, Status.pending_review):
+            job.review_message_id = None
+            job.review_chat_id = None
+            session.add(job)
+    summary = await send_queue_cards(client)
+    return summary.sent
