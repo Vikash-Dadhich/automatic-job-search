@@ -1,0 +1,21 @@
+name: Queue diagnostics
+
+# Read-only report on the production job pool. Manual only. No model calls,
+# no Telegram, no scraping.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev
+      - name: Report
+        run: uv run python scripts/queue_diagnostics.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
