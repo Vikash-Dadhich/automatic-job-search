@@ -897,12 +897,12 @@ async def test_current_config_dry_run_states_adapter_call_counts() -> None:
     sites = len(report["settings"]["jobspy_sites"])
     tenants = len(report["settings"]["active_workday_tenants"])
     assert sites == 4
-    assert tenants == 6
+    assert tenants == 23
     assert volume["jobspy_phrase_calls"] == 234
     assert volume["jobspy_sites_per_call"] == 4
-    assert volume["workday_tenant_calls"] == 234 * 6
-    assert volume["planned_adapter_calls"] == 234 + (234 * 6)
-    assert volume["scheduled_observation_slots"] == 234 * (4 + 6)
+    assert volume["workday_tenant_calls"] == 234 * tenants
+    assert volume["planned_adapter_calls"] == 234 + (234 * tenants)
+    assert volume["scheduled_observation_slots"] == 234 * (4 + tenants)
     assert volume["jobspy_phrase_calls"] != volume["workday_tenant_calls"]
     assert volume["scheduled_observation_slots"] != volume["planned_adapter_calls"]
     assert "HTTP" in volume["note"]
