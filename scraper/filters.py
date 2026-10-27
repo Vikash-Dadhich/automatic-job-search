@@ -16,6 +16,7 @@ from core.textmatch import (
     location_matches,
 )
 from scraper.models import RawPosting
+from scraper.title_family import title_family
 
 # Word-boundary match so "international" / "internal" are not false-positives.
 _INTERN_WORD_RE = re.compile(r"\bintern(ship)?\b", re.IGNORECASE)
@@ -291,6 +292,30 @@ def _yoe_reason(haystack: str, profile: Profile) -> str | None:
     return None
 
 
+_UNPAID = re.compile(
+    r"\bunpaid\b|\bequity[- ]only\b|\bprofit[- ]share only\b|\bnet[- ]profit share\b|"
+    r"\bcommission[- ]only\b|\bvolunteer\b",
+    re.IGNORECASE,
+)
+_OFF_SEASON = re.compile(r"\b(spring|fall|autumn|winter)\b|\bco-?op\b", re.IGNORECASE)
+_SUMMER = re.compile(r"\bsummer\b", re.IGNORECASE)
+
+
+def target_title_reason(title: str, haystack: str = "") -> str | None:
+    """Why a title is not one of the owner's targets, or None when it is.
+
+    Unpaid roles and internships that run outside the summer are dropped too. An
+    unknown term is kept: most summer postings never say "summer" in the title.
+    """
+    if title_family(title) is None:
+        return "not a target role: title is not product, consulting, strategy or business"
+    if _UNPAID.search(title) or re.search(r"\bunpaid internship\b", haystack, re.IGNORECASE):
+        return "unpaid or equity-only role"
+    if _OFF_SEASON.search(title) and not _SUMMER.search(title):
+        return "not a summer internship"
+    return None
+
+
 def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
     """Return whether a posting should proceed to scoring."""
     settings = get_settings()
@@ -355,6 +380,11 @@ def evaluate(posting: RawPosting, profile: Profile) -> FilterResult:
             return FilterResult(False, "internship_only: no internship signal in title")
         if has_seniority:
             return FilterResult(False, f"internship_only: seniority word in title: {posting.title}")
+
+    if settings.target_titles_only:
+        reason = target_title_reason(posting.title or "", haystack)
+        if reason:
+            return FilterResult(False, reason)
 
     # An explicit intern/internship title is not dropped for VP/director wording.
     # Softer signals such as "new grad" still go through the seniority gate.

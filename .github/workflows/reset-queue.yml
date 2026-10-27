@@ -1,0 +1,28 @@
+name: Reset apply queue
+
+# Manual, one-off. Returns waiting cards to the pool, deletes the bot's recent
+# cards (Telegram allows 48 hours), and drops off-target jobs. No model calls,
+# no scraping, nothing is submitted.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --no-dev
+      - name: Reset
+        run: uv run python main.py reset-queue
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

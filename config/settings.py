@@ -156,6 +156,21 @@ class Settings(BaseSettings):
         ge=128,
         description="max_output_tokens for scoring (includes Gemini thinking tokens)",
     )
+    target_titles_only: bool = Field(
+        default=False,
+        description=(
+            "Drop titles that are not product, consulting, strategy, marketing or "
+            "business roles, and unpaid or non-summer internships, before scoring"
+        ),
+    )
+    queue_mix: bool = Field(
+        default=False,
+        description="Fill the daily queue by the family split in config/queue_mix.yaml",
+    )
+    kit_answers: bool = Field(
+        default=False,
+        description="Draft two short answers for each queued job (sent only when on)",
+    )
     queue_daily_limit: int = Field(
         default=15,
         ge=1,

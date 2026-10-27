@@ -60,10 +60,10 @@ def test_deadline_found_only_when_stated() -> None:
     assert find_deadline(None) is None
 
 
-def test_card_shows_resume_and_deadline() -> None:
+def test_card_shows_deadline_only() -> None:
     text = build_queue_text(_job())
-    assert "Resume: Product resume" in text
-    assert "Deadline: March 15, 2027" in text
+    assert "Apply by March 15, 2027" in text
+    assert "Resume" not in text
 
 
 async def test_build_answers_uses_resolver_for_both_questions() -> None:
@@ -89,8 +89,12 @@ async def test_build_answers_skips_without_api_key(monkeypatch: Any) -> None:
     get_settings.cache_clear()
 
 
-async def test_send_cards_saves_answers_and_sends_them(db_ready: Path) -> None:
+async def test_send_cards_saves_answers_and_sends_them(db_ready: Path, monkeypatch: Any) -> None:
     del db_ready
+    monkeypatch.setenv("KIT_ANSWERS", "true")
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
     async with session_scope() as session:
         saved = await upsert_job(session, _job())
         assert saved.id is not None
@@ -101,12 +105,28 @@ async def test_send_cards_saves_answers_and_sends_them(db_ready: Path) -> None:
     summary = await send_queue_cards(client, resolver=resolver)
     assert summary.sent == 1
     texts = [c["payload"]["text"] for c in transport.calls if c["method"] == "sendMessage"]
-    assert len(texts) == 2
-    assert "Draft text." in texts[1]
+    assert len(texts) == 3
+    assert "Draft text." in texts[2]
     async with session_scope() as session:
         stored = await get_job_by_id(session, job_id)
     assert stored is not None
     assert has_kit(stored)
+    get_settings.cache_clear()
+
+
+async def test_answers_are_off_by_default(db_ready: Path) -> None:
+    del db_ready
+    async with session_scope() as session:
+        await upsert_job(session, _job("k3"))
+    transport = FakeTransport()
+    client = TelegramClient(transport=transport, chat_id="999")
+    writer = _Writer("Draft text.")
+    resolver = AnswerResolver(load_profile(), client=writer)  # type: ignore[arg-type]
+    summary = await send_queue_cards(client, resolver=resolver)
+    assert summary.sent == 1
+    assert writer.calls == 0
+    texts = [c for c in transport.calls if c["method"] == "sendMessage"]
+    assert len(texts) == 2
 
 
 async def test_card_still_sent_when_model_fails(db_ready: Path) -> None:
@@ -119,4 +139,4 @@ async def test_card_still_sent_when_model_fails(db_ready: Path) -> None:
     summary = await send_queue_cards(client, resolver=resolver)
     assert summary.sent == 1
     texts = [c for c in transport.calls if c["method"] == "sendMessage"]
-    assert len(texts) == 1
+    assert len(texts) == 2
