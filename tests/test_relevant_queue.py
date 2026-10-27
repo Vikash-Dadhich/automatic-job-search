@@ -265,3 +265,30 @@ async def test_reset_returns_cards_and_drops_off_target(db_ready: Path) -> None:
     assert raw is not None and raw.status == Status.filtered_out
     assert raw.justification and "not a target role" in raw.justification[0]
     assert done is not None and done.status == Status.submitted
+
+
+def test_same_firm_with_alias_counts_once() -> None:
+    bcg, alias = "Boston Consulting Group", "Boston Consulting Group (BCG)"
+    inverto = "Inverto | Summer Consultant Internship, Procurement (US)"
+    jobs = [
+        _job(inverto, 90, company=bcg),
+        _job(inverto, 89, company=alias),
+        _job("BCG Platinion | AI Tech Consultant (Internship)", 88, company=alias),
+        _job("Strategy Consultant Intern", 87, company=alias),
+    ]
+    picks = select_mix(jobs, seats=4, max_per_company=2)
+    assert len(picks) == 2
+    assert picks[1].job.title.startswith("BCG Platinion")
+
+
+async def test_resend_sends_waiting_cards_again(db_ready: Path) -> None:
+    from bot.reset import resend_queue
+
+    del db_ready
+    await _save(
+        _job("Product Manager Intern", 80, status=Status.pending_review, review_message_id=9)
+    )
+    transport = FakeTransport()
+    sent = await resend_queue(TelegramClient(transport=transport, chat_id="999"))
+    assert sent == 1
+    assert [c["method"] for c in transport.calls].count("sendMessage") == 2

@@ -109,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Print a pipeline health report and exit")
     doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     sub.add_parser("health", help="Print operational health and exit without the scheduler")
+    sub.add_parser("resend-queue", help="Send the waiting queue cards again")
     sub.add_parser(
         "reset-queue",
         help="Return waiting cards to the pool, delete recent cards, drop off-target jobs",
@@ -688,6 +689,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if command == "health":
         asyncio.run(_cmd_health())
+        return 0
+
+    if command == "resend-queue":
+        from bot.reset import resend_queue
+        from bot.telegram import TelegramClient
+
+        sent = asyncio.run(resend_queue(TelegramClient()))
+        print(f"::notice title=resend::sent {sent} cards")
         return 0
 
     if command == "reset-queue":
