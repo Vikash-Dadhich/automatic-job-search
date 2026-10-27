@@ -171,6 +171,12 @@ class Settings(BaseSettings):
         default=False,
         description="Draft two short answers for each queued job (sent only when on)",
     )
+    queue_high_fit_score: int = Field(
+        default=80,
+        ge=0,
+        le=100,
+        description="Fit score at or above which a job is always queued, past the daily limit",
+    )
     queue_daily_limit: int = Field(
         default=15,
         ge=1,

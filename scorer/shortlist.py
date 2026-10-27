@@ -306,11 +306,13 @@ async def apply_shortlist(*, config: dict[str, Any] | None = None) -> ShortlistS
     if get_settings().queue_mix:
         from scorer.queue_mix import select_mix
 
+        # Strong roles skip the daily limit; only the rest wait for seats.
         mixed = select_mix(
             staged,
             seats=open_seats,
             max_per_company=int(settings["shortlist"]["max_per_company"]),
             taken=list(pending),
+            high_fit=get_settings().queue_high_fit_score,
         )
         picks = [
             ShortlistPick(job=item.job, rank=index, reason=item.reason)
