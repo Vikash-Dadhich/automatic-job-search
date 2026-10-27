@@ -198,6 +198,7 @@ async def test_apply_shortlist_uses_mix_when_enabled(
     del db_ready
     monkeypatch.setenv("QUEUE_MIX", "true")
     monkeypatch.setenv("QUEUE_DAILY_LIMIT", "5")
+    monkeypatch.setenv("QUEUE_HIGH_FIT_SCORE", "100")
     get_settings.cache_clear()
     for i in range(6):
         await _save(_job("Data Engineer Intern", 99 - i))
