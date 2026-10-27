@@ -5,7 +5,14 @@ name: Job Pipeline
 # calls run-once. This workflow stays manual so the two clocks do not both fire.
 # Workday apply / LinkedIn scrape stay off (no Playwright sessions in Actions).
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ingest_mode:
+        description: "daily (new roles) or catchup (everything open, about a month back)"
+        required: false
+        default: daily
+        type: choice
+        options: [daily, catchup]
 
 # One pipeline at a time. A manual dispatch cancels an in-flight scheduled run
 # so two overlapping runs cannot double-score jobs or send duplicate cards.
@@ -77,6 +84,7 @@ jobs:
           # queue follows config/queue_mix.yaml (40% product, 40% consulting, 20% other).
           TARGET_TITLES_ONLY: "true"
           QUEUE_MIX: "true"
+          INGEST_MODE: ${{ inputs.ingest_mode || 'daily' }}
 
       # Stage timings from the database, shown even if the step above timed out.
       - name: Stage report
