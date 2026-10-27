@@ -101,7 +101,7 @@ def test_default_mix_is_40_40_20() -> None:
     assert seat_plan(mix, 0) == {"product": 0, "consulting": 0, "other": 0}
 
 
-def _job(title: str, score: int, company: str | None = None, **kwargs: Any) -> Job:
+def _job(title: str, score: int | None, company: str | None = None, **kwargs: Any) -> Job:
     number = next(_counter)
     data: dict[str, Any] = {
         "id": number,
@@ -168,7 +168,7 @@ def test_waiting_cards_count_toward_cap() -> None:
 def test_unscored_and_non_staged_jobs_are_ignored() -> None:
     jobs = [
         _job("Product Manager Intern", 90, status=Status.submitted),
-        _job("Product Manager Intern", 0, score=None),
+        _job("Product Manager Intern", None),
     ]
     assert select_mix(jobs, seats=3) == []
 
@@ -240,7 +240,7 @@ async def test_reset_returns_cards_and_drops_off_target(db_ready: Path) -> None:
     )
     staged_bad = await _save(_job("Technical Support Intern", 75))
     unscored_bad = await _save(
-        _job("Software Engineer Intern", 0, score=None, status=Status.discovered)
+        _job("Software Engineer Intern", None, status=Status.discovered)
     )
     applied = await _save(_job("Data Scientist Intern", 70, status=Status.submitted))
     transport = FakeTransport(responses={"deleteMessage": {"ok": True, "result": True}})
